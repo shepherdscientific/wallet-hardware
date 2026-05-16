@@ -64,7 +64,8 @@ enum WalletState {
   VERIFY_MISMATCH,
   DEVICE_ID_DISPLAY,
   ACCOUNT_SELECT,
-  ACCOUNT_RENAME
+  ACCOUNT_RENAME,
+  COIN_CONTROL
 };
 WalletState currentState = PIN_SETUP;
 
@@ -168,6 +169,11 @@ bool txReviewReady;
 int txSignCount = 0;
 int txSignError = 0;
 bool psbtFromUsb = false;
+
+// --- COIN CONTROL STATE ---
+bool txInputSelected[PSBT_MAX_INPUTS];
+uint8_t coinControlScrollIdx;
+uint8_t coinControlOwnedCount;
 
 // --- ANTI-PHISHING DEVICE ID ---
 char antiPhishWords[4][9] = {{0}};
@@ -308,11 +314,22 @@ void initTransactionReviewFromBuffer(const uint8_t *psbt_data, size_t psbt_len) 
   memset(txNonChangeIndices, 0, sizeof(txNonChangeIndices));
   memset(txReviewAddressBuf, 0, sizeof(txReviewAddressBuf));
   txReviewReady = false;
+  memset(txInputSelected, 0, sizeof(txInputSelected));
+  coinControlScrollIdx = 0;
+  coinControlOwnedCount = 0;
 
   psbt_err_t err = psbt_parse(psbt_data, psbt_len, &txReviewPsbt);
   if (err != PSBT_OK) {
     txReviewReady = false;
     return;
+  }
+
+  for (uint32_t i = 0; i < txReviewPsbt.input_count; i++) {
+    if (txReviewPsbt.inputs[i].bip32_derivation.present &&
+        txReviewPsbt.inputs[i].bip32_derivation.path_len > 0) {
+      txInputSelected[i] = true;
+      coinControlOwnedCount++;
+    }
   }
 
   txTotalInputSats = psbt_get_total_input_value(&txReviewPsbt);
@@ -403,7 +420,11 @@ void loop() {
       psbtFromUsb = true;
       initTransactionReviewFromBuffer(msg.data, msg.data_len);
       if (txReviewReady) {
-        currentState = TX_FEE_REVIEW;
+        if (coinControlOwnedCount > 1) {
+          currentState = COIN_CONTROL;
+        } else {
+          currentState = TX_FEE_REVIEW;
+        }
       } else {
         serial_send_error(-1);
         currentState = MAIN_MENU;
@@ -782,7 +803,11 @@ void handleNavigation() {
           psbtFromUsb = false;
           initTransactionReview();
           if (txReviewReady) {
-            currentState = TX_FEE_REVIEW;
+            if (coinControlOwnedCount > 1) {
+              currentState = COIN_CONTROL;
+            } else {
+              currentState = TX_FEE_REVIEW;
+            }
           } else {
             currentState = MAIN_MENU;
           }
@@ -962,6 +987,36 @@ void handleNavigation() {
         }
       }
       break;
+
+    case COIN_CONTROL: {
+      uint8_t totalItems = coinControlOwnedCount + 1;
+      if (cancelPressed) {
+        coinControlScrollIdx = (coinControlScrollIdx + 1) % totalItems;
+      } else if (confirmPressed) {
+        if (coinControlScrollIdx < coinControlOwnedCount) {
+          uint8_t inputIdx = 0;
+          for (uint32_t i = 0; i < txReviewPsbt.input_count; i++) {
+            if (txReviewPsbt.inputs[i].bip32_derivation.present &&
+                txReviewPsbt.inputs[i].bip32_derivation.path_len > 0) {
+              if (inputIdx == coinControlScrollIdx) {
+                txInputSelected[i] = !txInputSelected[i];
+                break;
+              }
+              inputIdx++;
+            }
+          }
+        } else {
+          bool anySelected = false;
+          for (uint32_t i = 0; i < txReviewPsbt.input_count; i++) {
+            if (txInputSelected[i]) { anySelected = true; break; }
+          }
+          if (anySelected) {
+            currentState = TX_FEE_REVIEW;
+          }
+        }
+      }
+      break;
+    }
   }
 }
 
@@ -1698,13 +1753,93 @@ void renderCurrentState() {
       display.setCursor(0, 56);
       display.print("CANCEL=cycle CONFIRM=select");
       break;
+
+    case COIN_CONTROL:
+      display.setCursor(0, 0);
+      display.println("COIN CONTROL");
+      display.println("---------------------");
+      {
+        uint8_t ownedIndices[PSBT_MAX_INPUTS];
+        uint8_t ownedCount = 0;
+        for (uint32_t i = 0; i < txReviewPsbt.input_count; i++) {
+          if (txReviewPsbt.inputs[i].bip32_derivation.present &&
+              txReviewPsbt.inputs[i].bip32_derivation.path_len > 0) {
+            ownedIndices[ownedCount] = (uint8_t)i;
+            ownedCount++;
+          }
+        }
+        for (uint32_t i = 0; i < txReviewPsbt.input_count; i++) {
+          bool owned = (txReviewPsbt.inputs[i].bip32_derivation.present &&
+                        txReviewPsbt.inputs[i].bip32_derivation.path_len > 0);
+          if (!owned) {
+            display.setCursor(0, 20 + (int)i * 8);
+            display.print("(E) EXTERNAL - skip");
+          }
+        }
+        uint8_t totalItems = ownedCount + 1;
+        int visibleCount = (totalItems < 5) ? (int)totalItems : 5;
+        int halfWin = visibleCount / 2;
+        int firstIdx = (int)coinControlScrollIdx - halfWin;
+        if (firstIdx < 0) firstIdx = 0;
+        int lastIdx = firstIdx + visibleCount;
+        if (lastIdx > (int)totalItems) {
+          lastIdx = (int)totalItems;
+          firstIdx = lastIdx - visibleCount;
+          if (firstIdx < 0) firstIdx = 0;
+        }
+        for (int item = firstIdx; item < lastIdx; item++) {
+          int row = 20 + (item - firstIdx) * 9;
+          display.setCursor(0, row);
+          bool isHighlighted = ((uint8_t)item == coinControlScrollIdx);
+          if (isHighlighted) {
+            display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          }
+          if (item < (int)ownedCount) {
+            uint32_t inputIdx = ownedIndices[item];
+            bool sel = txInputSelected[inputIdx];
+            display.print(sel ? "[*] " : "[ ] ");
+            for (int b = 0; b < 4; b++) {
+              if (txReviewPsbt.inputs[inputIdx].txid[b] < 0x10) display.print('0');
+              display.print(txReviewPsbt.inputs[inputIdx].txid[b], HEX);
+            }
+            display.print(" v:");
+            display.print(txReviewPsbt.inputs[inputIdx].vout);
+            display.print(" ");
+            char amt_buf[16];
+            format_sats(txReviewPsbt.inputs[inputIdx].witness_utxo.amount, amt_buf, sizeof(amt_buf));
+            display.print(amt_buf);
+            display.print(" sats");
+          } else {
+            display.print("> PROCEED TO REVIEW");
+          }
+          if (isHighlighted) {
+            while (display.getCursorX() < 21 * 6) display.print(" ");
+            display.setTextColor(SSD1306_WHITE);
+          }
+        }
+      }
+      {
+        uint64_t selectedSats = 0;
+        for (uint32_t i = 0; i < txReviewPsbt.input_count; i++) {
+          if (txInputSelected[i]) {
+            selectedSats += txReviewPsbt.inputs[i].witness_utxo.amount;
+          }
+        }
+        display.setCursor(0, 56);
+        display.print("Sel: ");
+        char sel_buf[16];
+        format_sats(selectedSats, sel_buf, sizeof(sel_buf));
+        display.print(sel_buf);
+        display.print(" CANCEL=scroll CONFIRM=toggle");
+      }
+      break;
   }
   display.display();
 }
 
 // --- SECURE PROCESSING LOGIC ---
 void executeSigningSequence() {
-  int signed_count = psbt_sign(&txReviewPsbt);
+  int signed_count = psbt_sign(&txReviewPsbt, txInputSelected);
   if (signed_count < 0) {
     txSignError = signed_count;
     currentState = TX_SIGN_ERROR;

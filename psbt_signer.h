@@ -24,7 +24,7 @@ bool sighash_bip143(const psbt_t *psbt, uint32_t input_index,
 bool sighash_bip341(const psbt_t *psbt, uint32_t input_index,
                      uint8_t hash_out[32]);
 
-int psbt_sign(psbt_t *psbt);
+int psbt_sign(psbt_t *psbt, const bool *selected);
 
 #ifdef __cplusplus
 }

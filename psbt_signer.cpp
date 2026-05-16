@@ -367,11 +367,12 @@ static int psbt_sign_input(psbt_t *psbt, uint32_t input_index) {
   return 1;
 }
 
-int psbt_sign(psbt_t *psbt) {
+int psbt_sign(psbt_t *psbt, const bool *selected) {
   if (!psbt) return PSBT_SIGN_ERR_PARAM;
 
   int signed_count = 0;
   for (uint32_t i = 0; i < psbt->input_count; i++) {
+    if (selected && !selected[i]) continue;
     int result = psbt_sign_input(psbt, i);
     if (result < 0) {
       for (uint32_t j = 0; j < psbt->input_count; j++) {
