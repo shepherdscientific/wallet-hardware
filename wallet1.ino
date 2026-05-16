@@ -24,6 +24,7 @@
 #include "account_manager.h"
 #include "settings.h"
 #include "version.h"
+#include "watchdog.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -84,7 +85,8 @@ enum WalletState {
   SETTINGS_PIN_MISMATCH,
   SETTINGS_ABOUT,
   SETTINGS_FACTORY_RESET_CONFIRM,
-  SETTINGS_FACTORY_RESET_SURE
+  SETTINGS_FACTORY_RESET_SURE,
+  WATCHDOG_RECOVERY
 };
 WalletState currentState = PIN_SETUP;
 
@@ -433,11 +435,24 @@ void setup() {
 
   se051_init();
 
+  watchdog_init();
+
   account_init();
 
   settings_init();
   display.ssd1306_command(SSD1306_SETCONTRAST);
   display.ssd1306_command(settings_get_contrast());
+
+  if (watchdog_is_signing_active()) {
+    watchdog_clear_signing_active();
+    currentState = WATCHDOG_RECOVERY;
+    return;
+  }
+
+  if (watchdog_last_reset_was_wdt()) {
+    currentState = WATCHDOG_RECOVERY;
+    return;
+  }
 
   if (pin_is_set()) {
     currentState = PIN_ENTRY;
@@ -458,6 +473,8 @@ void setup() {
 }
 
 void loop() {
+  watchdog_feed();
+
 #ifdef DEV_BUILD
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.handle();
@@ -1254,6 +1271,17 @@ void handleNavigation() {
         lastActivityMs = millis();
       } else if (cancelPressed) {
         currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case WATCHDOG_RECOVERY:
+      if (confirmPressed || cancelPressed) {
+        currentState = PIN_ENTRY;
+        pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+        pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+        pinPosition = 0;
+        pinDigitValue = 0;
+        pinAttempts = pin_get_attempts();
       }
       break;
 
@@ -2203,9 +2231,19 @@ void renderCurrentState() {
       }
       display.print("Active acct: ");
       display.println(account_get_active());
-      display.setCursor(0, 56);
-      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-      display.print(" [BACK] ");
+      {
+        const char *crash = watchdog_get_last_crash();
+        if (crash) {
+          display.setCursor(0, 56);
+          display.print("Last crash: ");
+          display.println(crash);
+        } else {
+          display.setCursor(0, 56);
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print(" [BACK] ");
+          display.setTextColor(SSD1306_WHITE);
+        }
+      }
       break;
 
     case SETTINGS_FACTORY_RESET_CONFIRM:
@@ -2237,6 +2275,19 @@ void renderCurrentState() {
       display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
       display.print(" CANCEL=No CONFIRM=WIPE ");
       display.setTextColor(SSD1306_WHITE);
+      break;
+
+    case WATCHDOG_RECOVERY:
+      display.setCursor(0, 0);
+      display.println("DEVICE RECOVERED");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.println("Unexpected restart.");
+      display.setCursor(0, 36);
+      display.println("Re-enter PIN to");
+      display.println("continue.");
+      display.setCursor(0, 56);
+      display.print("Any button to continue");
       break;
 
     case COIN_CONTROL:
@@ -2324,7 +2375,9 @@ void renderCurrentState() {
 
 // --- SECURE PROCESSING LOGIC ---
 void executeSigningSequence() {
+  watchdog_set_signing_active(true);
   int signed_count = psbt_sign(&txReviewPsbt, txInputSelected);
+  watchdog_set_signing_active(false);
   if (signed_count < 0) {
     txSignError = signed_count;
     currentState = TX_SIGN_ERROR;

@@ -517,8 +517,8 @@
         "All ISRs and timer callbacks are minimal; no crypto operations in interrupt context"
       ],
       "priority": 24,
-      "passes": false,
-      "notes": "The 'signing_active' NVS flag is the key recovery mechanism. It prevents returning a partially-signed PSBT if the device crashed mid-signature, which could confuse the host wallet."
+      "passes": true,
+      "notes": "Implementation complete. watchdog.h/cpp module with TWDT (10s timeout), signing_active NVS flag bracket around psbt_sign(), WATCHDOG_RECOVERY state on WDT reset/signing crash, reset reason detection via esp_reset_reason(), last crash log display in About screen. 7 unit tests pass."
     },
     {
       "id": "US-025",

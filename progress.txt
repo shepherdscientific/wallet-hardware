@@ -478,3 +478,39 @@ Patterns discovered:
   - Firmware Version Attestation: FW version, build hash, SE serial shown in About screen; hash injected automatically post-build
   - Development: no eFuse burning, rapid iteration with dev environment
 - All 30 existing tests pass (10 settings + 12 account_manager + 8 coin_control)
+
+___________________________________________
+US-024 - Watchdog Timer and Safe Panic Recovery
+___________________________________________
+Status: COMPLETE
+Date: 2026-05-16
+
+Implementation:
+- New module: watchdog.h/cpp (ESP32 Preferences / CI stub dual-backend pattern)
+- TWDT (Task Watchdog Timer) initialized with 10-second timeout via esp_task_wdt_init()
+- watchdog_feed() called at the top of loop(); TWDT added to main Arduino task
+- NVS "watchdog" namespace with keys: signing_active, last_crash
+- signing_active flag: set true before psbt_sign(), cleared after - prevents partial PSBT
+- Recovery on boot: if signing_active set, clear it and show WATCHDOG_RECOVERY
+- Recovery on boot: if last reset was WDT (RST_WDT/TASK_WDT/INT_WDT), show recovery screen
+- WATCHDOG_RECOVERY state: "DEVICE RECOVERED - Re-enter PIN"; any button -> PIN_ENTRY
+- Reset reason detection via esp_reset_reason(); mapped to human-readable strings
+- Last crash reason stored in NVS (Preferences) on boot if unexpected reset detected
+- Last crash displayed in Settings -> About screen below active account line
+- Stack overflow: FreeRTOS stack overflow detection via TWDT panic mode
+- 7 new unit tests for watchdog module (init, set/clear, toggle, WDT detection, crash log, feed)
+
+Modified files:
+- wallet1.ino: includes watchdog.h; WATCHDOG_RECOVERY added to WalletState enum
+  setup(): watchdog_init() after se051_init(); signing_active/WDT recovery checks
+  loop(): watchdog_feed() at top of main loop
+  executeSigningSequence(): watchdog_set_signing_active(true/false) around psbt_sign()
+  handleNavigation/renderCurrentState: WATCHDOG_RECOVERY state rendering
+  About screen: shows last crash reason if available
+
+New files:
+- watchdog.h: interface (init, feed, reset detection, signing_active, crash log)
+- watchdog.cpp: dual-backend implementation (ESP32 TWDT+NVS, host in-memory stub)
+- test_watchdog.cpp: 7 unit tests
+
+Test results: 37 tests pass (10 settings + 12 account_manager + 8 coin_control + 7 watchdog)
