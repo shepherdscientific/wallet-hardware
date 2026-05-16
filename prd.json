@@ -2,13 +2,20 @@
   "project": "CoinCube Hardware Wallet",
   "branchName": "ralph/btc-hw-wallet-full",
   "description": "Fully functional Bitcoin hardware wallet on ESP32-S3. Hardware: 128x64 SSD1306 OLED (I2C SDA=GPIO8, SCL=GPIO9), two buttons (BTN_CONFIRM=GPIO1, BTN_CANCEL=GPIO2), NXP SE051C2 secure element (replacing ATECC608B, same I2C bus), WiFi for OTA (dev only). Firmware is Arduino-framework C++ targeting ESP32-S3. All cryptographic key material must never leave the secure element.",
-  "agents": ["firmware-engineer", "security-engineer", "bitcoin-protocol-engineer"],
+  "agents": [
+    "firmware-engineer",
+    "security-engineer",
+    "bitcoin-protocol-engineer"
+  ],
   "userStories": [
     {
       "id": "US-001",
       "title": "NXP SE051C2 I2C HAL and Driver",
       "description": "As a firmware engineer, I need a hardware abstraction layer for the NXP SE051C2 secure element so all higher-level crypto and key operations have a stable interface to call.",
-      "agents": ["security-engineer", "firmware-engineer"],
+      "agents": [
+        "security-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "SE051C2 initialises successfully over I2C (address 0x48) on Wire SDA=GPIO8 SCL=GPIO9",
         "HAL exposes: se051_init(), se051_get_random(buf, len), se051_ecdsa_sign(keyId, hash, sig), se051_schnorr_sign(keyId, hash, sig), se051_store_key(keyId, keyMaterial), se051_delete_key(keyId), se051_get_pubkey(keyId, pubkey)",
@@ -19,14 +26,17 @@
         "Compile with -DUSE_SE051 flag; stub HAL compiled under -DUSE_SE_STUB for CI builds"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "SE051C2 uses GlobalPlatform SCP03 secure channel. Use NXP's SE05x Arduino library or port the SE05x_API from the NXP IoT-Agent SDK. ATECC608B stubs can remain for CI."
     },
     {
       "id": "US-002",
       "title": "True-Random BIP39 Seed Generation via SE TRNG",
       "description": "As a user setting up a new wallet, I want the device to generate a cryptographically secure 24-word BIP39 mnemonic using entropy from the SE051C2 hardware TRNG so my seed is never predictable.",
-      "agents": ["security-engineer", "bitcoin-protocol-engineer"],
+      "agents": [
+        "security-engineer",
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "256-bit entropy sourced exclusively from se051_get_random()",
         "Entropy passed through BIP39 checksum (SHA-256 first 8 bits appended) to produce 264-bit word-index sequence",
@@ -44,14 +54,16 @@
       "id": "US-003",
       "title": "Secure Key Storage: Seed → SE051C2 Key Objects",
       "description": "As a security engineer, I need the BIP39 master seed to be derived into a BIP32 root key and stored inside the SE051C2 as an EC key object so private key material never exists in ESP32-S3 RAM beyond the initial setup ceremony.",
-      "agents": ["security-engineer"],
+      "agents": [
+        "security-engineer"
+      ],
       "acceptanceCriteria": [
         "PBKDF2-HMAC-SHA512 (BIP39) used to derive 64-byte master seed from mnemonic + optional passphrase",
         "BIP32 master private key (k) and chain code (c) derived from master seed via HMAC-SHA512('Bitcoin seed' || seed)",
         "Master private key stored in SE051C2 as key object ID = 0x01 using se051_store_key()",
         "Chain code stored in SE051C2 key object ID = 0x02",
         "After successful SE storage, seed bytes zeroed in RAM using volatile memset pattern",
-      "se051_get_pubkey(0x01) returns the correct compressed 33-byte secp256k1 master public key",
+        "se051_get_pubkey(0x01) returns the correct compressed 33-byte secp256k1 master public key",
         "A wallet_is_initialized() function returns true only if both objects 0x01 and 0x02 exist in SE",
         "Storage failure causes immediate error screen and aborts setup; no partial state persists"
       ],
@@ -63,7 +75,10 @@
       "id": "US-004",
       "title": "BIP32/44/84/86 HD Key Derivation Engine",
       "description": "As a bitcoin-protocol engineer, I need an HD derivation engine that generates child public keys and derivation paths for Legacy, Native SegWit, and Taproot address types so the wallet can produce correct Bitcoin addresses without exposing private keys.",
-      "agents": ["bitcoin-protocol-engineer", "security-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer",
+        "security-engineer"
+      ],
       "acceptanceCriteria": [
         "Supported derivation paths: m/44'/0'/0'/0/n (P2PKH), m/84'/0'/0'/0/n (P2WPKH), m/86'/0'/0'/0/n (P2TR)",
         "Public-key-only child derivation (BIP32 public child key derivation) performed on ESP32-S3 using master public key + chain code from SE",
@@ -81,7 +96,9 @@
       "id": "US-005",
       "title": "PIN Setup and Entry UI (2-Button Interface)",
       "description": "As a user, I want to set a 6-digit PIN on first boot and enter it on every subsequent boot so that physical access to the device does not immediately grant access to my funds.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "First-boot PIN setup: CONFIRM increments current digit (0-9 wrap), CANCEL confirms digit and advances to next position",
         "PIN is 6 digits; progress shown as filled/empty circles on OLED (e.g. '●●●○○○')",
@@ -100,7 +117,9 @@
       "id": "US-006",
       "title": "Mnemonic Display Ceremony (Word-by-Word)",
       "description": "As a new user, I want the device to show me my 24-word seed phrase one word at a time on the OLED so I can write it down securely without the full phrase ever being visible at once.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Mnemonic display state shows: word number (e.g. 'Word 7 of 24'), word index in BIP39 list, and the word itself in large text (textSize 2)",
         "CANCEL advances to next word; CONFIRM on word 24 exits to verification step",
@@ -118,7 +137,10 @@
       "id": "US-007",
       "title": "Wallet Restore from BIP39 Mnemonic",
       "description": "As a returning user whose device was reset, I want to restore my wallet by entering my 24-word BIP39 mnemonic on the device using the 2-button interface so I can regain access to my funds.",
-      "agents": ["firmware-engineer", "bitcoin-protocol-engineer"],
+      "agents": [
+        "firmware-engineer",
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "Restore flow accessible from boot menu when no wallet is initialised",
         "Word entry: CANCEL scrolls through BIP39 wordlist alphabetically (A→Z→A), CONFIRM selects current word",
@@ -137,7 +159,10 @@
       "id": "US-008",
       "title": "Bitcoin Address Generation (P2PKH, P2WPKH, P2TR)",
       "description": "As a user, I want the device to generate and display a Bitcoin receive address for the selected address type so I can receive funds to my hardware wallet.",
-      "agents": ["bitcoin-protocol-engineer", "firmware-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "address_generate(type, index, addr_out): generates address string for P2PKH (1...), P2WPKH (bc1q...), P2TR (bc1p...)",
         "P2PKH: Hash160(pubkey) → Base58Check with version byte 0x00",
@@ -157,7 +182,9 @@
       "id": "US-009",
       "title": "QR Code Rendering for Receive Address on SSD1306",
       "description": "As a user, I want to see my receive address as a QR code on the OLED display so I can scan it with a phone camera without typing the address manually.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "QR code generated for the current receive address string using QR code version auto-selection (alphanumeric mode for bech32)",
         "QR rendered as a pixel-perfect bitmap on the 128x64 SSD1306; modules scaled to fit (max version 4 at 1px per module, centered)",
@@ -175,7 +202,9 @@
       "id": "US-010",
       "title": "PSBT v0/v2 Parser (BIP174/BIP370)",
       "description": "As a bitcoin-protocol engineer, I need a PSBT parser that can decode a partially-signed Bitcoin transaction from raw bytes so the device can display transaction details and sign inputs.",
-      "agents": ["bitcoin-protocol-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "psbt_parse(buf, len, psbt_out) decodes a BIP174 PSBT v0 or BIP370 PSBT v2 from binary buffer",
         "Parser extracts: version, global unsigned tx, per-input fields (previous txid, vout, sequence, BIP32 derivation, witness UTXO, sighash type), per-output fields (amount, scriptPubKey, BIP32 derivation)",
@@ -194,7 +223,10 @@
       "id": "US-011",
       "title": "Transaction Review UI (Outputs, Fee, Destination)",
       "description": "As a user, I want to see a clear summary of a transaction I am about to sign — including destination address, amount, and fee — on the OLED before I confirm, so I can verify the transaction details match my intent.",
-      "agents": ["firmware-engineer", "bitcoin-protocol-engineer"],
+      "agents": [
+        "firmware-engineer",
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "Transaction review screen shows: 'SEND', output amount in BTC (8 decimal places), fee in sats and sat/vB, destination address (chunked, scrollable with CANCEL)",
         "If PSBT has multiple outputs, display each output sequentially; CANCEL scrolls through outputs",
@@ -213,7 +245,10 @@
       "id": "US-012",
       "title": "PSBT Signing via SE051C2 (ECDSA + Schnorr)",
       "description": "As a user who has reviewed and confirmed a transaction, I want the device to sign it using the private key stored in the SE051C2 so the signature is produced without my private key ever appearing in ESP32-S3 RAM.",
-      "agents": ["security-engineer", "bitcoin-protocol-engineer"],
+      "agents": [
+        "security-engineer",
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "For each PSBT input: derive the correct child private key index from BIP32 path in the PSBT input map using se051 internal derivation",
         "P2WPKH inputs: compute sighash per BIP143 (SHA256d of serialized segwit signing data); sign with ECDSA via se051_ecdsa_sign()",
@@ -233,7 +268,10 @@
       "id": "US-013",
       "title": "BIP39 Passphrase (25th Word) Support",
       "description": "As a privacy-conscious user, I want to optionally enter a BIP39 passphrase (25th word) during wallet setup or restore so I can have hidden wallets that cannot be discovered even if my mnemonic is found.",
-      "agents": ["firmware-engineer", "bitcoin-protocol-engineer"],
+      "agents": [
+        "firmware-engineer",
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "After mnemonic entry, display 'Add Passphrase? [YES/NO]'; CONFIRM = YES, CANCEL = NO",
         "If YES: character-by-character entry using 2-button interface (CANCEL cycles character set A-Z/a-z/0-9/symbols, CONFIRM selects char, long-press CONFIRM = done)",
@@ -252,7 +290,9 @@
       "id": "US-014",
       "title": "USB CDC Serial Transport for PSBT Exchange",
       "description": "As a developer/user, I want to send a PSBT to the device over USB serial and receive the signed PSBT back so the device can be used as a signing device with a companion software wallet on a desktop computer.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "ESP32-S3 USB CDC enabled (USB_CDC_ENABLED=1 in build config); appears as /dev/ttyACM0 or /dev/cu.usbmodem on host",
         "Protocol: newline-delimited base64; device reads until '\\n', decodes base64 to binary PSBT",
@@ -271,7 +311,9 @@
       "id": "US-015",
       "title": "Address Verification Flow (Anti-Substitution)",
       "description": "As a user, I want the device to show me a receive address and require me to confirm it matches what is displayed on the companion app so I can detect address-substitution attacks by malware on the host computer.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Receive menu has 'Verify Address' option distinct from 'Show Address'",
         "Verify flow: companion app sends address verification request over USB ('VERIFY:<address>\\n')",
@@ -290,7 +332,10 @@
       "id": "US-016",
       "title": "Anti-Phishing Device Pairing Code",
       "description": "As a user, I want the device to display a unique device pairing word (anti-phishing code) at boot that I can verify matches my registered code in the companion app so I can detect fake firmware or cloned devices.",
-      "agents": ["security-engineer", "firmware-engineer"],
+      "agents": [
+        "security-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "On first setup, device generates a 4-word anti-phishing code using se051_get_random() mapped to BIP39 wordlist",
         "Anti-phishing code stored in SE051C2 as binary object ID=0x04",
@@ -308,7 +353,9 @@
       "id": "US-017",
       "title": "PIN Lockout, Wipe, and Monotonic Attempt Counter",
       "description": "As a security engineer, I need the PIN attempt counter to be stored in the SE051C2 as a monotonic counter that cannot be reset by reflashing NVS or the ESP32-S3 firmware, so that brute-force PIN attacks are bounded by hardware.",
-      "agents": ["security-engineer"],
+      "agents": [
+        "security-engineer"
+      ],
       "acceptanceCriteria": [
         "PIN attempt counter stored in SE051C2 monotonic counter object (ID=0x05); increments before each PIN verification attempt",
         "Counter reset to 0 only after successful PIN entry (requires unlocking SE with current PIN-derived credential)",
@@ -326,7 +373,10 @@
       "id": "US-018",
       "title": "Multi-Account HD Wallet (BIP44 Account Index)",
       "description": "As a power user, I want to manage multiple independent HD accounts (different BIP44 account indices) on the same seed so I can separate funds for different purposes without using multiple seeds.",
-      "agents": ["bitcoin-protocol-engineer", "firmware-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Account selector accessible from main menu; displays 'Account 0', 'Account 1' ... 'Account 9'",
         "CANCEL cycles through accounts 0–9; CONFIRM selects and switches active account",
@@ -345,7 +395,10 @@
       "id": "US-019",
       "title": "UTXO Coin Control (Input Selection for Signing)",
       "description": "As a privacy-conscious user, I want to select which UTXOs (unspent outputs) to include in a transaction I am signing so I can avoid merging coins from different sources and maintain transaction privacy.",
-      "agents": ["bitcoin-protocol-engineer", "firmware-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Coin control menu shows list of UTXOs from the PSBT's inputs (txid truncated to 8 chars, vout, amount in sats)",
         "CANCEL scrolls through UTXOs; CONFIRM toggles selection (selected = '✓', unselected = '○')",
@@ -364,7 +417,9 @@
       "id": "US-020",
       "title": "Settings Menu (Display Timeout, Auto-Lock, Brightness)",
       "description": "As a user, I want a settings menu accessible from the main menu where I can configure display auto-off timeout, wallet auto-lock timeout, and OLED contrast so I can balance usability and security.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Settings menu items: Display Timeout, Auto-Lock Timeout, Display Contrast, Change PIN, About",
         "Display Timeout: options 30s / 1m / 2m / 5m / Never; OLED off after timeout, any button wakes",
@@ -383,7 +438,10 @@
       "id": "US-021",
       "title": "Factory Reset (Full Key and Settings Wipe)",
       "description": "As a user selling or repurposing my device, I want a factory reset option that irreversibly deletes all keys, PIN, settings, and pairing data so the next owner cannot access my funds.",
-      "agents": ["security-engineer", "firmware-engineer"],
+      "agents": [
+        "security-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Factory reset accessible from Settings menu (requires PIN authentication)",
         "Double-confirmation required: 'Reset wallet? [CANCEL=No] [CONFIRM=Yes]' then 'Are you sure? This cannot be undone. [CANCEL=No] [CONFIRM=WIPE]'",
@@ -401,7 +459,10 @@
       "id": "US-022",
       "title": "Disable WiFi OTA in Production Builds",
       "description": "As a security engineer, I need WiFi and OTA update capability to be disabled in production firmware builds so the hardware wallet has no wireless attack surface when deployed to end users.",
-      "agents": ["security-engineer", "firmware-engineer"],
+      "agents": [
+        "security-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "Build flag -DPRODUCTION_BUILD disables all WiFi code paths (WiFi.begin, ArduinoOTA) via #ifdef guards",
         "In production build, WiFi radio powered off at boot using esp_wifi_stop() and esp_wifi_deinit()",
@@ -420,7 +481,9 @@
       "id": "US-023",
       "title": "Firmware Secure Boot and Version Attestation",
       "description": "As a security engineer, I need ESP32-S3 secure boot v2 enabled so the device only boots signed firmware, and a firmware version screen so users can verify they are running authentic software.",
-      "agents": ["security-engineer"],
+      "agents": [
+        "security-engineer"
+      ],
       "acceptanceCriteria": [
         "ESP32-S3 secure boot v2 enabled via sdkconfig: CONFIG_SECURE_BOOT=y, CONFIG_SECURE_BOOT_V2_ENABLED=y",
         "Signing key generated offline; public key hash burned into ESP32-S3 eFuses during manufacturing",
@@ -439,7 +502,10 @@
       "id": "US-024",
       "title": "Watchdog Timer and Safe Panic Recovery",
       "description": "As a firmware engineer, I need a hardware watchdog so that if the firmware hangs or crashes during a sensitive operation (e.g., signing), the device reboots to a safe state rather than remaining in an undefined state.",
-      "agents": ["firmware-engineer", "security-engineer"],
+      "agents": [
+        "firmware-engineer",
+        "security-engineer"
+      ],
       "acceptanceCriteria": [
         "ESP32-S3 hardware watchdog (TWDT) enabled with 10-second timeout",
         "Watchdog fed (esp_task_wdt_reset()) only in the main loop; any blocking operation > 10 s triggers reboot",
@@ -458,7 +524,10 @@
       "id": "US-025",
       "title": "RBF Flag Detection and Fee Bump Warning",
       "description": "As a user reviewing a transaction, I want the device to warn me if the transaction has the RBF (Replace-By-Fee) flag set so I am aware the recipient can see an unconfirmed payment that may be replaced.",
-      "agents": ["bitcoin-protocol-engineer", "firmware-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "PSBT parser detects RBF: any input with nSequence < 0xFFFFFFFE is flagged as RBF-enabled",
         "Transaction review screen shows 'RBF: ON' or 'RBF: OFF' on the fee line",
@@ -475,7 +544,10 @@
       "id": "US-026",
       "title": "Multi-Sig PSBT Co-Signing Support",
       "description": "As a user participating in a 2-of-3 multisig setup, I want the device to sign its input in a multi-sig PSBT and return the partially-signed result so the PSBT can be passed to other co-signers.",
-      "agents": ["bitcoin-protocol-engineer", "security-engineer"],
+      "agents": [
+        "bitcoin-protocol-engineer",
+        "security-engineer"
+      ],
       "acceptanceCriteria": [
         "PSBT parser identifies multisig inputs via redeemScript or witnessScript analysis",
         "For P2WSH multisig: device signs its input if a BIP32 derivation path in the input matches a key owned by this device",
@@ -494,7 +566,9 @@
       "id": "US-027",
       "title": "Post-Quantum Status Screen (ML-KEM-512 Roadmap)",
       "description": "As a user concerned about quantum computing threats to Bitcoin, I want to see the device's post-quantum security status and roadmap so I understand the long-term security posture of the wallet.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "PQC Status screen accessible from main menu (replaces the existing PQC_STATUS state)",
         "Screen shows: current SE type ('NXP SE051C2'), current signature scheme ('secp256k1 ECDSA / Schnorr'), PQC readiness ('PQC: Roadmap - Phase 1')",
@@ -512,7 +586,10 @@
       "id": "US-028",
       "title": "Wallet Balance Display (Live via Companion App)",
       "description": "As a user, I want the balance screen to show a live balance fetched from the companion app over USB rather than a hardcoded mock value, so I can see my actual on-chain balance.",
-      "agents": ["firmware-engineer", "bitcoin-protocol-engineer"],
+      "agents": [
+        "firmware-engineer",
+        "bitcoin-protocol-engineer"
+      ],
       "acceptanceCriteria": [
         "On entering SHOW_BALANCE state, device sends 'BALANCE_REQUEST:<address>\\n' over USB CDC for each address index 0..N",
         "Companion app responds 'BALANCE:<confirmed_sats>:<unconfirmed_sats>\\n'",
@@ -531,7 +608,9 @@
       "id": "US-029",
       "title": "Scrollable Transaction History Display",
       "description": "As a user, I want to view a list of recent transactions on the device so I can quickly verify recent activity without opening the companion app.",
-      "agents": ["firmware-engineer"],
+      "agents": [
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "TX History menu item added to main menu",
         "Device requests 'TX_HISTORY:<address>\\n' over USB; companion responds with up to 10 entries: 'TX:<txid_short>:<direction>:<amount_sats>:<confirmations>\\n' per entry",
@@ -550,7 +629,10 @@
       "id": "US-030",
       "title": "Firmware Integrity Self-Test on Boot",
       "description": "As a security engineer, I need the device to verify its own firmware integrity on every boot using a SHA-256 hash comparison so that any flash tampering is detected before the wallet is unlocked.",
-      "agents": ["security-engineer", "firmware-engineer"],
+      "agents": [
+        "security-engineer",
+        "firmware-engineer"
+      ],
       "acceptanceCriteria": [
         "On boot (before PIN prompt), compute SHA-256 over the firmware partition (esp_partition_read loop)",
         "Expected hash stored in SE051C2 as binary object ID=0x06 (written during factory provisioning)",
