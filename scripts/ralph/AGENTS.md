@@ -108,3 +108,12 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 - After word selection, reset prefix and start fresh for the next word position.
 - Validate full mnemonic checksum after all 24 words; show "Bad checksum - retry" and reset to word 1 on failure.
 - Sensitive buffers (mnemonic words, prefix) zeroed with volatile pointer pattern after use.
+
+### Bitcoin Address Encoding Patterns
+- **Hash160 pattern:** `sha256(data, sha)`, `ripemd160(sha, hash160)` — used by both P2PKH and P2WPKH address generation.
+- **Tagged hash (BIP340/BIP86):** `sha256(tag_hash || tag_hash || msg)` where `tag_hash = sha256(tag)`. Used for Taproot tweak computation.
+- **BIP86 Taproot tweak:** decompress pubkey → `t*G` (scalar multiply) → point_add(P, tG) → extract x-only coordinate. Exposed as `hd_ec_pubkey_tweak()` from bip32.
+- **Bech32/32m difference:** Bech32 checksum XOR constant = 1, Bech32m (BIP350 for witness v1+) uses 0x2bc830a3. Same encode pipeline otherwise.
+- **Fixed-size buffers for addresses:** Max Base58Check output ≈35 chars, max Bech32 ≈73 chars. Safe bound: 128 chars for MAX_ADDRESS_LEN.
+- **Address type cycling UI:** Store type index (0=P2PKH, 1=P2WPKH, 2=P2TR), CANCEL advances type, CONFIRM returns to menu. Generate via `address_generate(type, index, str)` which selects the correct derivation path (44'/84'/86').
+- Agents: `bitcoin-protocol-engineer`, `firmware-engineer`.

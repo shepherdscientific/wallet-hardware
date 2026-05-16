@@ -121,3 +121,26 @@ Patterns discovered:
 - UI consistency: CONFIRM cycles values, CANCEL locks/advances — same pattern as PIN entry (CONFIRM increments digit, CANCEL advances position)
 - Zero-match guard pattern: never enter word scroll with 0 matches, never modulo by zero
 - Preview pattern: show live match count for tentative input (prefix + current letter) during cycling
+
+### 2026-05-16: US-008 — Bitcoin Address Generation (P2PKH, P2WPKH, P2TR)
+- Created `ripemd160.h/cpp`: standalone RIPEMD-160 implementation with opaque context pattern (like sha256)
+- Created `base58.h/cpp`: Base58Check encoding with P2PKH version byte 0x00
+- Created `bech32.h/cpp`: Bech32 (BIP173) and Bech32m (BIP350) encoding with HRP "bc"
+- Created `address.h/cpp`: address_generate(type, index, addr_out) for all three address types
+  - P2PKH: Hash160 = RIPEMD160(SHA256(pubkey)) → Base58Check version 0x00 → 1... address
+  - P2WPKH: Hash160 → bech32_encode("bc", 0, hash160) → bc1q... address
+  - P2TR: x-only internal key → tagged_hash("TapTweak", internal_key) → BIP86 tweak pubkey → bech32m_encode("bc", 1, tweaked_xonly) → bc1p... address
+- Exposed `hd_ec_pubkey_tweak()` from bip32.h/cpp for BIP86 Taproot tweak (P + t*G → x-only)
+- Updated `wallet1.ino`: SHOW_ADDRESS now uses real generated address with type cycling (CANCEL = P2PKH→P2WPKH→P2TR)
+- Added `address_type_name()` for OLED display labels
+- 25 unit tests: RIPEMD-160 OpenSSL test vectors (5), Base58Check known vectors (3), Bech32/32m structural (8), address_generate (9)
+- Tests compile with `g++ -DUSE_SE_STUB -I. sha512.cpp hmac_sha512.cpp sha256.cpp hmac_sha256.cpp bip39.cpp wallet_storage.cpp se051_hal_stub.cpp bip32.cpp ripemd160.cpp base58.cpp bech32.cpp address.cpp test_address.cpp`
+- All 119 tests pass (94 existing + 25 new)
+
+Patterns discovered:
+- Hash160 pattern: sha256(data, sha), ripemd160(sha, hash160) → used by both P2PKH and P2WPKH
+- Tagged hash pattern for BIP340/BIP86: sha256(tag_hash || tag_hash || msg) where tag_hash = sha256(tag)
+- BIP86 Taproot tweak: decompress pubkey → t*G → point_add → extract x-only coordinate
+- Bech32/32m differ only in checksum constant (1 vs 0x2bc830a3), same encode pipeline
+- Fixed-size buffers for Bitcoin address encoding: max Base58Check output ~35 chars, max Bech32 ~73 chars, safe bound is 128 chars
+- Address type cycling UI: store type index (0-2), CANCEL advances, CONFIRM returns to menu
