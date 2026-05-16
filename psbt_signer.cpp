@@ -68,6 +68,11 @@ static bool is_p2tr(const psbt_input_t *input) {
          input->witness_utxo.script_pubkey[1] == 0x20;
 }
 
+static bool is_multisig_input(const psbt_input_t *input) {
+  return input->is_multisig &&
+         (input->has_redeem_script || input->has_witness_script);
+}
+
 static se051_err_t se051_derive_child_key(const uint32_t *path, uint8_t path_len,
                                            uint8_t temp_key_id) {
   uint8_t key[BIP32_KEY_LEN];
@@ -296,6 +301,30 @@ static bool input_is_owned(const psbt_input_t *input) {
   return input->bip32_derivation.present && input->bip32_derivation.path_len > 0;
 }
 
+bool psbt_multisig_is_participant(const psbt_input_t *input,
+                                   const uint8_t pubkey[PSBT_PUBKEY_LEN]) {
+  if (!input || !pubkey) return false;
+  if (!input->is_multisig) return false;
+
+  uint8_t script_len = 0;
+  const uint8_t *script = psbt_multisig_get_script(input, &script_len);
+  if (!script || script_len < 3) return false;
+
+  size_t i = 1;
+  while (i < script_len - 2) {
+    if (script[i] == 0x21 && i + 34 <= script_len) {
+      if (memcmp(script + i + 1, pubkey, PSBT_PUBKEY_LEN) == 0) return true;
+      i += 34;
+    } else if (script[i] == 0x41 && i + 66 <= script_len) {
+      if (memcmp(script + i + 1, pubkey, PSBT_PUBKEY_LEN) == 0) return true;
+      i += 66;
+    } else {
+      break;
+    }
+  }
+  return false;
+}
+
 static int psbt_sign_input(psbt_t *psbt, uint32_t input_index) {
   psbt_input_t *input = &psbt->inputs[input_index];
   if (!input_is_owned(input)) return 0;
@@ -314,7 +343,67 @@ static int psbt_sign_input(psbt_t *psbt, uint32_t input_index) {
   uint8_t sighash[32];
   uint32_t sighash_type = input->sighash_type ? input->sighash_type : PSBT_SIGHASH_ALL;
 
-  if (is_p2wpkh(input)) {
+  if (is_multisig_input(input)) {
+    uint8_t pubkey[PSBT_PUBKEY_LEN];
+    if (se051_get_pubkey(PSBT_TEMP_KEY_ID, pubkey) != SE_OK) {
+      se051_delete_key(PSBT_TEMP_KEY_ID);
+      return PSBT_SIGN_ERR_SE;
+    }
+
+    bool is_participant = psbt_multisig_is_participant(input, pubkey);
+    if (!is_participant) {
+      se051_delete_key(PSBT_TEMP_KEY_ID);
+      return 0;
+    }
+
+    uint8_t script_len = 0;
+    const uint8_t *script = psbt_multisig_get_script(input, &script_len);
+    if (!script || script_len == 0) {
+      se051_delete_key(PSBT_TEMP_KEY_ID);
+      return PSBT_SIGN_ERR_PARAM;
+    }
+
+    uint8_t hash_prevouts[32];
+    uint8_t hash_sequence[32];
+    uint8_t hash_outputs[32];
+    compute_hash_prevouts(psbt, hash_prevouts);
+    compute_hash_sequence(psbt, hash_sequence);
+    compute_hash_outputs(psbt, hash_outputs);
+
+    uint8_t sigmsg[512];
+    size_t pos = 0;
+    write_u32le(sigmsg + pos, psbt->tx_version); pos += 4;
+    memcpy(sigmsg + pos, hash_prevouts, 32); pos += 32;
+    memcpy(sigmsg + pos, hash_sequence, 32); pos += 32;
+    memcpy(sigmsg + pos, input->txid, 32); pos += 32;
+    write_u32le(sigmsg + pos, input->vout); pos += 4;
+    write_varint_len(sigmsg, &pos, script_len);
+    memcpy(sigmsg + pos, script, script_len); pos += script_len;
+    write_u64le(sigmsg + pos, input->witness_utxo.amount); pos += 8;
+    write_u32le(sigmsg + pos, input->sequence); pos += 4;
+    memcpy(sigmsg + pos, hash_outputs, 32); pos += 32;
+    write_u32le(sigmsg + pos, psbt->locktime); pos += 4;
+    write_u32le(sigmsg + pos, sighash_type); pos += 4;
+
+    dbl_sha256(sigmsg, pos, sighash);
+
+    size_t sig_len;
+    uint8_t sig[SE051_ECDSA_MAX_DER_LEN];
+    err = se051_ecdsa_sign(PSBT_TEMP_KEY_ID, sighash, sig, &sig_len);
+    if (err != SE_OK) {
+      se051_delete_key(PSBT_TEMP_KEY_ID);
+      return PSBT_SIGN_ERR_SE;
+    }
+
+    sig[sig_len++] = (uint8_t)(sighash_type & 0xFF);
+    if (sig_len > sizeof(input->partial_sig)) sig_len = sizeof(input->partial_sig);
+    input->has_partial_sig = true;
+    memcpy(input->partial_sig_pubkey, pubkey, PSBT_PUBKEY_LEN);
+    memcpy(input->partial_sig, sig, sig_len);
+    input->partial_sig_len = (uint8_t)sig_len;
+    memset(sig, 0, sizeof(sig));
+    input->multisig_existing_sigs++;
+  } else if (is_p2wpkh(input)) {
     if (!sighash_bip143(psbt, input_index, sighash_type, sighash)) {
       se051_delete_key(PSBT_TEMP_KEY_ID);
       return PSBT_SIGN_ERR_SIGHASH;
@@ -370,9 +459,12 @@ static int psbt_sign_input(psbt_t *psbt, uint32_t input_index) {
 int psbt_sign(psbt_t *psbt, const bool *selected) {
   if (!psbt) return PSBT_SIGN_ERR_PARAM;
 
+  bool any_selected_owned = false;
   int signed_count = 0;
   for (uint32_t i = 0; i < psbt->input_count; i++) {
-    if (selected && !selected[i]) continue;
+    bool is_selected = !selected || selected[i];
+    if (is_selected && input_is_owned(&psbt->inputs[i])) any_selected_owned = true;
+    if (!is_selected) continue;
     int result = psbt_sign_input(psbt, i);
     if (result < 0) {
       for (uint32_t j = 0; j < psbt->input_count; j++) {
@@ -383,5 +475,6 @@ int psbt_sign(psbt_t *psbt, const bool *selected) {
     }
     signed_count += result;
   }
+  if (signed_count == 0 && any_selected_owned) return PSBT_SIGN_ERR_NO_PARTICIPANT;
   return signed_count;
 }

@@ -1845,9 +1845,21 @@ void renderCurrentState() {
           display.println((unsigned)txReviewPsbt.input_count);
           display.println("---------------------");
           display.setCursor(0, 20);
-          display.print("Sig: ");
-          display.println(get_input_segwit_label(&txReviewPsbt.inputs[inputIdx]));
-          display.setCursor(0, 32);
+          if (txReviewPsbt.inputs[inputIdx].is_multisig) {
+            display.print("MULTISIG ");
+            display.print(txReviewPsbt.inputs[inputIdx].multisig_m);
+            display.print("-of-");
+            display.println(txReviewPsbt.inputs[inputIdx].multisig_n);
+            display.setCursor(0, 32);
+            display.print("Sigs: ");
+            display.print(txReviewPsbt.inputs[inputIdx].multisig_existing_sigs);
+            display.print("/");
+            display.println(txReviewPsbt.inputs[inputIdx].multisig_m);
+          } else {
+            display.print("Sig: ");
+            display.println(get_input_segwit_label(&txReviewPsbt.inputs[inputIdx]));
+          }
+          display.setCursor(0, 44);
           display.print("Seq: 0x");
           display.println(txReviewPsbt.inputs[inputIdx].sequence, HEX);
         display.setCursor(0, 56);
@@ -1966,9 +1978,15 @@ void renderCurrentState() {
       display.setTextColor(SSD1306_WHITE);
       display.setTextSize(1);
       display.println("");
-      display.print("SE error: ");
-      display.println(txSignError);
-      display.println("No PSBT returned.");
+      if (txSignError == PSBT_SIGN_ERR_NO_PARTICIPANT) {
+        display.println("No inputs to sign -");
+        display.println("not a participant");
+        display.println("in any input.");
+      } else {
+        display.print("SE error: ");
+        display.println(txSignError);
+        display.println("No PSBT returned.");
+      }
       if (psbtFromUsb) {
         serial_send_error(txSignError);
         psbtFromUsb = false;

@@ -559,8 +559,8 @@
         "Miniscript policy parsing not required; only standard M-of-N P2WSH and P2MS scripts"
       ],
       "priority": 26,
-      "passes": false,
-      "notes": "Multi-sig is a stretch goal but important for advanced users. The key challenge is identifying which input key belongs to this device by matching BIP32 derivation paths in the PSBT."
+      "passes": true,
+      "notes": "Implementation complete. PSBT parser parses redeemScript (0x04) and witnessScript (0x05). psbt_analyze_multisig_input() decodes M-of-N from scripts. psbt_multisig_is_participant() checks if derived pubkey appears in script via memcmp. psbt_sign_input() derives key via SE, checks participation, signs multisig P2WSH inputs with BIP143 sighash using witnessScript as scriptCode, adds partial_sig without finalizing. PSBT_SIGN_ERR_NO_PARTICIPANT returned when no matching key found. Multisig indicators in TX_FEE_REVIEW input detail pages. 12 dedicated unit tests pass."
     },
     {
       "id": "US-027",

@@ -51,6 +51,8 @@ extern "C" {
 #define PSBT_PATH_MAX 6
 #define PSBT_MAX_DER_SIG_LEN 72
 #define PSBT_SCHNORR_SIG_LEN 64
+#define PSBT_MAX_SCRIPT_LEN 128
+#define PSBT_MULTISIG_MAX_KEYS 16
 
 typedef enum {
     PSBT_OK              = 0,
@@ -93,6 +95,16 @@ typedef struct {
     uint8_t             partial_sig_len;
     bool                has_tap_key_sig;
     uint8_t             tap_key_sig[PSBT_SCHNORR_SIG_LEN];
+    bool                has_redeem_script;
+    uint8_t             redeem_script[PSBT_MAX_SCRIPT_LEN];
+    uint8_t             redeem_script_len;
+    bool                has_witness_script;
+    uint8_t             witness_script[PSBT_MAX_SCRIPT_LEN];
+    uint8_t             witness_script_len;
+    bool                is_multisig;
+    uint8_t             multisig_m;
+    uint8_t             multisig_n;
+    uint8_t             multisig_existing_sigs;
 } psbt_input_t;
 
 typedef struct {
@@ -124,6 +136,11 @@ uint64_t   psbt_get_total_output_value(const psbt_t *psbt);
 int64_t    psbt_get_fee(const psbt_t *psbt);
 
 size_t     psbt_serialize(const psbt_t *psbt, uint8_t *buf, size_t buf_max);
+
+void       psbt_analyze_multisig_input(psbt_input_t *input);
+
+const uint8_t* psbt_multisig_get_script(const psbt_input_t *input,
+                                         uint8_t *script_len_out);
 
 #ifdef __cplusplus
 }

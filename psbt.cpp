@@ -244,6 +244,20 @@ static bool parse_input_map(const uint8_t *buf, size_t *pos, size_t end,
                 memcpy(input->tap_key_sig, buf + val_start, PSBT_SCHNORR_SIG_LEN);
             }
             break;
+        case PSBT_IN_REDEEM_SCRIPT:
+            if (val_len <= sizeof(input->redeem_script)) {
+                input->has_redeem_script = true;
+                memcpy(input->redeem_script, buf + val_start, (size_t)val_len);
+                input->redeem_script_len = (uint8_t)val_len;
+            }
+            break;
+        case PSBT_IN_WITNESS_SCRIPT:
+            if (val_len <= sizeof(input->witness_script)) {
+                input->has_witness_script = true;
+                memcpy(input->witness_script, buf + val_start, (size_t)val_len);
+                input->witness_script_len = (uint8_t)val_len;
+            }
+            break;
         default:
             break;
         }
@@ -387,6 +401,7 @@ psbt_err_t psbt_parse(const uint8_t *buf, size_t len, psbt_t *psbt_out) {
             if (pos >= len) return PSBT_ERR_PARSE;
             if (!parse_input_map(buf, &pos, len, &psbt_out->inputs[i], 0))
                 return PSBT_ERR_PARSE;
+            psbt_analyze_multisig_input(&psbt_out->inputs[i]);
         }
 
         for (uint32_t i = 0; i < psbt_out->output_count; i++) {
@@ -423,6 +438,7 @@ psbt_err_t psbt_parse(const uint8_t *buf, size_t len, psbt_t *psbt_out) {
                 if (in_count >= PSBT_MAX_INPUTS) return PSBT_ERR_TOO_LARGE;
                 if (!parse_input_map(buf, &pos, len, &psbt_out->inputs[in_count], 2))
                     return PSBT_ERR_PARSE;
+                psbt_analyze_multisig_input(&psbt_out->inputs[in_count]);
                 in_count++;
             } else {
                 if (out_count >= PSBT_MAX_OUTPUTS) return PSBT_ERR_TOO_LARGE;
@@ -470,6 +486,84 @@ int64_t psbt_get_fee(const psbt_t *psbt) {
     uint64_t out = psbt_get_total_output_value(psbt);
     if (in < out) return -1;
     return (int64_t)(in - out);
+}
+
+const uint8_t* psbt_multisig_get_script(const psbt_input_t *input,
+                                         uint8_t *script_len_out) {
+  if (input->has_witness_script) {
+    if (script_len_out) *script_len_out = input->witness_script_len;
+    return input->witness_script;
+  }
+  if (input->has_redeem_script) {
+    if (script_len_out) *script_len_out = input->redeem_script_len;
+    return input->redeem_script;
+  }
+  if (script_len_out) *script_len_out = 0;
+  return NULL;
+}
+
+static bool is_multisig_script(const uint8_t *script, uint8_t script_len,
+                                uint8_t *m, uint8_t *n, uint8_t *pubkey_count) {
+  if (!script || script_len < 6) return false;
+
+  uint8_t op_m = script[0];
+  if (op_m < 0x51 || op_m > 0x60) return false;
+  uint8_t m_val = op_m - 0x50;
+
+  uint8_t last_byte = script[script_len - 1];
+  if (last_byte != 0xAE) return false;
+
+  uint8_t count = 0;
+  size_t i = 1;
+  while (i < script_len - 2) {
+    if (script[i] == 0x21) {
+      if (i + 34 > script_len) return false;
+      i += 34;
+      count++;
+    } else if (script[i] == 0x41) {
+      if (i + 66 > script_len) return false;
+      i += 66;
+      count++;
+    } else {
+      return false;
+    }
+  }
+
+  uint8_t op_n = script[script_len - 2];
+  if (op_n < 0x51 || op_n > 0x60) return false;
+  uint8_t n_val = op_n - 0x50;
+
+  if (m_val > n_val || n_val == 0) return false;
+  if (count != n_val) return false;
+
+  if (m) *m = m_val;
+  if (n) *n = n_val;
+  if (pubkey_count) *pubkey_count = count;
+  return true;
+}
+
+void psbt_analyze_multisig_input(psbt_input_t *input) {
+  if (!input) return;
+  input->is_multisig = false;
+  input->multisig_m = 0;
+  input->multisig_n = 0;
+  input->multisig_existing_sigs = 0;
+
+  uint8_t script_len = 0;
+  const uint8_t *script = psbt_multisig_get_script(input, &script_len);
+  if (!script) return;
+
+  uint8_t m = 0, n = 0, pubkey_count = 0;
+  if (!is_multisig_script(script, script_len, &m, &n, &pubkey_count))
+    return;
+
+  input->is_multisig = true;
+  input->multisig_m = m;
+  input->multisig_n = n;
+
+  if (input->has_partial_sig) {
+    input->multisig_existing_sigs = 1;
+  }
 }
 
 static void serialize_varint(uint64_t v, uint8_t *buf, size_t *pos) {
@@ -581,7 +675,15 @@ static void serialize_input_map(uint8_t *buf, size_t *pos,
     }
     if (input->has_tap_key_sig) {
         serialize_kv(buf, pos, PSBT_IN_TAP_KEY_SIG, NULL, 0,
-                     input->tap_key_sig, PSBT_SCHNORR_SIG_LEN);
+                      input->tap_key_sig, PSBT_SCHNORR_SIG_LEN);
+    }
+    if (input->has_redeem_script && input->redeem_script_len > 0) {
+        serialize_kv(buf, pos, PSBT_IN_REDEEM_SCRIPT, NULL, 0,
+                      input->redeem_script, input->redeem_script_len);
+    }
+    if (input->has_witness_script && input->witness_script_len > 0) {
+        serialize_kv(buf, pos, PSBT_IN_WITNESS_SCRIPT, NULL, 0,
+                      input->witness_script, input->witness_script_len);
     }
     serialize_kv(buf, pos, PSBT_IN_PREVIOUS_TXID, NULL, 0,
                  input->txid, PSBT_TXID_LEN);

@@ -535,3 +535,31 @@ Patterns discovered:
 - PSBT_IN_WITNESS_UTXO = 0x01 (not 0x06 which is PSBT_IN_BIP32_DERIVATION)
 - Multi-page transaction review: reuse same state (TX_FEE_REVIEW) with metaPage counter instead of creating separate states per detail page
 - segwit label detection must handle both raw scriptPubKey (direct struct assignment) and compactSize-prefixed format (from PSBT parser)
+
+### 2026-05-17: US-026 — Multi-Sig PSBT Co-Signing Support
+- Updated `psbt.h`: added multisig fields to psbt_input_t (has_redeem_script, redeem_script[128], has_witness_script, witness_script[128], is_multisig, multisig_m, multisig_n, multisig_existing_sigs); added PSBT_MAX_SCRIPT_LEN (128) and PSBT_MULTISIG_MAX_KEYS (16); public API psbt_analyze_multisig_input() and psbt_multisig_get_script()
+- Updated `psbt.cpp`:
+  - parse_input_map() now handles PSBT_IN_REDEEM_SCRIPT (0x04) and PSBT_IN_WITNESS_SCRIPT (0x05); copies up to PSBT_MAX_SCRIPT_LEN bytes
+  - psbt_parse() calls psbt_analyze_multisig_input() after each input map parse (both v0 and v2 code paths)
+  - is_multisig_script(): validates standard M-of-N format — OP_m (0x51-0x60) || OP_PUSH33(0x21) pubkeys... || OP_CHECKMULTISIG(0xAE); handles 33-byte compressed and 65-byte uncompressed pubkeys; validates M <= N and pubkey count == N
+  - psbt_analyze_multisig_input(): extracts script via psbt_multisig_get_script() (witness first, then redeem), passes to is_multisig_script(), sets is_multisig/m/n/existing_sigs flags
+  - psbt_multisig_get_script(): returns witness_script if present, else redeem_script; transparent to callers
+  - serialize_input_map(): preserves redeem_script and witness_script KV pairs in round-trip serialization
+- Updated `psbt_signer.h`: added PSBT_SIGN_ERR_NO_PARTICIPANT (-5) and psbt_multisig_is_participant() API
+- Updated `psbt_signer.cpp`:
+  - is_multisig_input(): checks input->is_multisig && (has_redeem_script || has_witness_script)
+  - psbt_multisig_is_participant(): iterates script opcodes, skips OP_PUSH33(0x21)/OP_PUSH65(0x41), memcmp matching against input pubkey; NULL-safe
+  - psbt_sign_input() multisig branch: derives child key via SE, checks participation, skips (returns 0) if not a participant; computes BIP143 sighash with scriptCode = varint(witnessScript_len) || witnessScript; signs ECDSA via SE, appends sighash byte, stores partial_sig; increments multisig_existing_sigs counter
+  - psbt_sign(): tracks any_selected_owned flag; returns PSBT_SIGN_ERR_NO_PARTICIPANT when signed_count==0 && any_selected_owned (input owned but key not in any script); fixes coin_control edge case (unselected inputs + NO_PARTICIPANT distinction)
+- Updated `wallet1.ino`:
+  - TX_SIGN_ERROR rendering: shows "No inputs to sign - not a participant" for PSBT_SIGN_ERR_NO_PARTICIPANT instead of generic SE error
+  - TX_FEE_REVIEW per-input detail pages: shows "MULTISIG N-of-M" + "Sigs: existing/M" when input is multisig; otherwise shows "Sig: SegWit/Taproot label" as before
+- `test_multisig.cpp`: 12 unit tests covering script analysis (2-of-3, 2-of-2, 1-of-3, no-script, bad-script), participant matching (positive/negative/NULL/non-multisig), PSBT v0 parse round-trip with witness script KV, NO_PARTICIPANT rejection, skipped input without BIP32 path
+- All 39 tests pass (19 tx_metadata + 8 coin_control + 12 multisig)
+
+Patterns discovered:
+- Multisig script analysis: OP_m (0x51-0x60) → M = byte-0x50; OP_CHECKMULTISIG at last byte; count pubkeys between first pubkey and OP_n; validate M <= N and count == N
+- P2WSH sighash: same BIP143 structure as P2WPKH but scriptCode = varint(witnessScript_len) || witnessScript (not the 22-byte P2WPKH lockScript)
+- Multisig participation check: derive child pubkey via SE (not hd_derive_pubkey), then linear scan witness/redeem script for OP_PUSH33/OP_PUSH65 + memcmp
+- Partial signing pattern: add partial_sig KV to PSBT without finalizing scriptsig/witness; existing signatures counted via multisig_existing_sigs field; device never finalizes multisig PSBTs
+- NO_PARTICIPANT vs unselected distinction: NO_PARTICIPANT only when at least one SELECTED input is owned AND signed_count == 0; unselected inputs that happen to be multisig-non-participant don't trigger the error
