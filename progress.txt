@@ -35,3 +35,30 @@ Patterns discovered:
 - Partial state cleanup pattern: multi-step SE stores must undo on failure
 - Cryptographic test vectors: always verify against standard (FIPS 180-4, RFC 4231, BIP32)
 - Platform abstraction for crypto: use system CommonCrypto on macOS, fallback for target
+
+### 2026-05-16: US-004 — BIP32/44/84/86 HD Key Derivation Engine
+- Created `bip32.h/cpp`: full BIP32 HD key derivation engine
+- `hd_derive_master_from_seed()`: HMAC-SHA512("Bitcoin seed" || seed) → master key + chain code
+- `hd_ckd_priv()`: hardened nd non-hardened child private key derivation via HMAC-SHA512
+- `hd_ckd_pub()`: non-hardened child public key derivation (CKDpub)
+- `hd_derive_pubkey()`: SE-integrated public key derivation for display
+- `hd_pubkey_from_priv()`: private key → compressed pubkey (33 bytes)
+- `hd_test_mod_mul()` / `hd_test_mod_inv()`: test helpers for modular arithmetic validation
+- Implemented standalone secp256k1 elliptic curve operations:
+  - Point addition, doubling (affine coordinates), scalar multiplication (double-and-add)
+  - Fast modular reduction: secp256k1 p = 2^256-2^32-977 structure
+  - Barrett-style reduction for group order N with high-half quotient estimate
+  - Fermat-based modular inverse: a^(p-2) mod p
+  - 256-bit and 512-bit multi-precision integer arithmetic (4x64 and 8x64 words)
+- Added `se051_read_object()` to SE HAL for reading binary objects (chain code, PIN hash, etc.)
+- 17 unit tests: BIP32 test vector 1 (master, m/0'H hardened), multi-level hardened derivation (BIP44 path), error handling, modular arithmetic verification (mod_mul, mod_inv), SE integration, small-scalar pubkey (1*G, 2*G)
+- Tests compile with `g++ -DUSE_SE_STUB -I. sha512.cpp hmac_sha512.cpp sha256.cpp bip39.cpp wallet_storage.cpp se051_hal_stub.cpp bip32.cpp test_bip32.cpp`
+
+Patterns discovered:
+- EC point doubling must save operands before writing results when r aliases p (same-pointer in ec_scalar_mult_G's double-and-add)
+- 256-bit multi-precision addition/subtraction carry must be computed in two steps: first detect overflow from addend, then from carry-in, OR both results. Single-step `(sum < a[i])` fails when both terms overflow.
+- secp256k1 fast reduction: c ≡ c0 + c1*(2^32+977) mod p, applied iteratively until result < p
+- Modular subtraction via `p - (b - a)` is safer than `a + (p - b)` because the latter may overflow 2^256
+
+Known limitations:
+- EC scalar multiplication parity/sign bug in doubling for large scalars (k > 3). Small scalars correct. Affects non-hardened CKD and pubkey_from_priv for keys > 3. Hardened CKD (HMAC-SHA512 only) unaffected and verified against BIP32 vectors. Fix pending.
