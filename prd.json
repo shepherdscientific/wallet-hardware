@@ -388,8 +388,8 @@
         "Active account indicator shown on main menu header (e.g. 'COINCUBE [Acct 2]')"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": "BIP44 account hardened derivation: m/purpose'/coin_type'/account'/change/index. All accounts share the same master key in SE051C2; derivation happens per-request."
+      "passes": true,
+      "notes": "Implementation complete. account_manager module with NVS (Preferences) persistence for active account index, per-account address indices, and 6-char custom labels. Updated address generation (address_generate/address_generate_with_path) to accept account parameter for BIP44 path[2]. Updated PSBT output address builder to extract account from derivation path. ACCOUNT_SELECT state with scrollable 10-account list + Rename option. ACCOUNT_RENAME state with 2-button character entry (A-Z/a-z/0-9/-/./_). Active account indicator shown in main menu header and all receive/verify screens. Address index auto-increments on QR confirm (address reveal). 12 new unit tests for account_manager module."
     },
     {
       "id": "US-019",

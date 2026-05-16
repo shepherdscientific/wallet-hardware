@@ -1,5 +1,37 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-018 — Multi-Account HD Wallet (BIP44 Account Index)
+- Created `account_manager.h/cpp`: multi-account state with NVS persistence (Preferences on ESP32, in-memory stub for host)
+  - `account_init()`: initializes active account to 0 on first boot
+  - `account_get_active()` / `account_set_active(idx)`: persist and retrieve active account (0–9)
+  - `account_get_address_index(account, &idx)` / `account_increment_address_index(account)`: per-account independent address indices stored in NVS keyed by account number
+  - `account_get_name(account, buf, len)` / `account_set_name(account, name)`: 6-character label persisted in NVS; truncated at name length
+  - Bounds safety: rejects out-of-range accounts, NULL-safe, clamped active account
+- Updated `address.h/cpp`: added `account` parameter to `address_generate(type, account, index, out)` and `address_generate_with_path(type, account, change, index, out)`
+  - Derivation path `path[2]` now uses `(account | HD_HARDENED)` instead of hardcoded 0
+  - Full backward compatibility: existing callers pass account parameter
+- Updated `wallet1.ino`:
+  - Added `ACCOUNT_SELECT` and `ACCOUNT_RENAME` states to WalletState enum
+  - Menu: "7. Account" added (TOTAL_MENU_ITEMS now 7); separator removed from header to fit 7 items on 64px OLED
+  - Menu header: shows "COINCUBE [Acct N]" or "COINCUBE [custom_name]"
+  - ACCOUNT_SELECT: scrollable 5-account viewport with CANCEL cycling 0-9 + "Rename" option; CONFIRM selects account or enters rename
+  - ACCOUNT_RENAME: 2-button character entry using alphanumeric set (A-Z, a-z, 0-9, hyphen, underscore, period); max 6 chars; CANCEL cycles chars, CONFIRM selects; DONE at end of char list saves to NVS; pre-populates with existing name if set
+  - `updateAddressDisplay()`: uses `account_get_active()` for derivation path account
+  - `build_output_address()`: extracts account from PSBT BIP32 derivation `path[2] & ~HD_HARDENED`
+  - QR_DISPLAY confirm: auto-increments `account_increment_address_index(account)` on address reveal
+  - Receive entry: loads per-account address index via `account_get_address_index()`
+  - All receive/verify screen headers updated to show active account name/number
+  - Added `#include "bip32.h"` for HD_HARDENED constant usage in `build_output_address()`
+- 12 new unit tests: account initialize, set/get active, active clamp, address index defaults/per-account independence/increment, name set/get/truncation, NULL safety, out-of-range rejection
+- Tests compile with `g++ -std=c++11 -I. account_manager.cpp test_account_manager.cpp`
+
+Patterns discovered:
+- NVS Preferences pattern: use `#if defined(ARDUINO) && defined(ESP32)` guard with `Preferences.h` for ESP32 target; static in-memory arrays for host stub — follows same pattern as `serial_transport.cpp`
+- Per-account key namespacing: NVS keys formed as `addr_idx_N` and `name_N` using snprintf with account number suffix
+- Scrollable list viewport pattern: maintain `activeAccount` index, compute `firstIdx`/`lastIdx` window centered around selection with clamping to list bounds; show 5 visible items at a time
+- 2-button rename UI: reuse passphrase character entry pattern (char array + DONE sentinel, CANCEL=cycle, CONFIRM=select) but limited to alphanumeric + symbols and pre-populated from existing NVS value
+- Address index increment on reveal: increment `account_increment_address_index()` in QR_DISPLAY→MAIN_MENU transition — ensures next visit to Receive shows fresh index
+
 ### 2026-05-16: US-017 — PIN Lockout, Wipe, and Monotonic Attempt Counter
 - Added `se051_monotonic_counter_get()` / `se051_monotonic_counter_increment()` / `se051_monotonic_counter_reset()` to SE HAL (header, stub, ESP32)
 - PIN attempt counter (SE object 0x05) now uses monotonic counter API with hardware-enforced increment-only semantics
