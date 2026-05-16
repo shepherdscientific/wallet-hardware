@@ -80,7 +80,7 @@ static bool parse_global_map(const uint8_t *buf, size_t *pos, size_t end,
 
             size_t tx_pos = val_start;
             size_t tx_end = val_start + (size_t)val_len;
-            read_u32le(buf, &tx_pos, tx_end);
+            psbt->tx_version = read_u32le(buf, &tx_pos, tx_end);
 
             bool segwit = false;
             if (tx_pos < tx_end && buf[tx_pos] == 0x00) {
@@ -121,6 +121,11 @@ static bool parse_global_map(const uint8_t *buf, size_t *pos, size_t end,
 
             if (tx_pos + 4 > tx_end) return false;
             psbt->locktime = read_u32le(buf, &tx_pos, tx_end);
+        } else if (key_type == PSBT_GLOBAL_TX_VERSION) {
+            if (val_len >= 4) {
+                size_t rd = val_start;
+                psbt->tx_version = read_u32le(buf, &rd, val_start + (size_t)val_len);
+            }
         }
 
         *pos = val_start + (size_t)val_len;
@@ -221,6 +226,21 @@ static bool parse_input_map(const uint8_t *buf, size_t *pos, size_t end,
                 for (uint8_t j = 0; j < path_len; j++)
                     input->bip32_derivation.path[j] =
                         read_u32le(buf, &ppos, ppos + 4);
+            }
+            break;
+        case PSBT_IN_PARTIAL_SIG:
+            if (key_data_remaining >= 1 && val_len <= PSBT_MAX_DER_SIG_LEN) {
+                input->has_partial_sig = true;
+                if (key_data_remaining <= PSBT_PUBKEY_LEN)
+                    memcpy(input->partial_sig_pubkey, buf + key_data_start, key_data_remaining);
+                memcpy(input->partial_sig, buf + val_start, (size_t)val_len);
+                input->partial_sig_len = (uint8_t)val_len;
+            }
+            break;
+        case PSBT_IN_TAP_KEY_SIG:
+            if (val_len == PSBT_SCHNORR_SIG_LEN) {
+                input->has_tap_key_sig = true;
+                memcpy(input->tap_key_sig, buf + val_start, PSBT_SCHNORR_SIG_LEN);
             }
             break;
         default:

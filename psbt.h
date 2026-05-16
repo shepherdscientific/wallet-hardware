@@ -49,6 +49,8 @@ extern "C" {
 #define PSBT_OUT_TAP_BIP32_DERIV  0x07
 
 #define PSBT_PATH_MAX 6
+#define PSBT_MAX_DER_SIG_LEN 72
+#define PSBT_SCHNORR_SIG_LEN 64
 
 typedef enum {
     PSBT_OK              = 0,
@@ -85,6 +87,12 @@ typedef struct {
     psbt_bip32_deriv_t  bip32_derivation;
     bool                has_taproot;
     uint8_t             tap_internal_key[32];
+    bool                has_partial_sig;
+    uint8_t             partial_sig_pubkey[PSBT_PUBKEY_LEN];
+    uint8_t             partial_sig[PSBT_MAX_DER_SIG_LEN];
+    uint8_t             partial_sig_len;
+    bool                has_tap_key_sig;
+    uint8_t             tap_key_sig[PSBT_SCHNORR_SIG_LEN];
 } psbt_input_t;
 
 typedef struct {
@@ -100,6 +108,7 @@ typedef struct {
     uint32_t        input_count;
     uint32_t        output_count;
     uint32_t        locktime;
+    uint32_t        tx_version;
     bool            has_global_tx;
     psbt_input_t    inputs[PSBT_MAX_INPUTS];
     psbt_output_t   outputs[PSBT_MAX_OUTPUTS];

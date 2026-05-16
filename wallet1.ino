@@ -11,6 +11,7 @@
 #include "address.h"
 #include "qr_renderer.h"
 #include "psbt.h"
+#include "psbt_signer.h"
 #include "bech32.h"
 
 // --- HARDWARE CONFIG ---
@@ -48,6 +49,7 @@ enum WalletState {
   TX_OUTPUT_REVIEW,
   PQC_STATUS,
   TX_SUCCESS,
+  TX_SIGN_ERROR,
   WALLET_WIPED
 };
 WalletState currentState = PIN_SETUP;
@@ -112,6 +114,8 @@ uint32_t txNonChangeOutputCount;
 uint32_t txNonChangeIndices[PSBT_MAX_OUTPUTS];
 char txReviewAddressBuf[MAX_ADDRESS_LEN];
 bool txReviewReady;
+int txSignCount = 0;
+int txSignError = 0;
 
 const char *const TX_SEND_LABEL = "SEND";
 const char *const TX_CHANGE_LABEL = "CHANGE";
@@ -591,6 +595,7 @@ void handleNavigation() {
     case SHOW_BALANCE:
     case PQC_STATUS:
     case TX_SUCCESS:
+    case TX_SIGN_ERROR:
       if (cancelPressed || confirmPressed) {
         currentState = MAIN_MENU;
       }
@@ -1053,10 +1058,37 @@ void renderCurrentState() {
     case TX_SUCCESS:
       display.setCursor(0, 10);
       display.setTextSize(2);
-      display.println("TX SIGNED!");
-      display.setTextSize(1);
-      display.println("\nBroadcast ready.");
+      if (txSignCount > 0) {
+        display.println("TX SIGNED!");
+        display.setTextSize(1);
+        display.println("");
+        char msg[32];
+        snprintf(msg, sizeof(msg), "%d input(s) signed.", txSignCount);
+        display.println(msg);
+      } else {
+        display.println("NO INPUTS");
+        display.setTextSize(1);
+        display.println("");
+        display.println("No owned inputs found");
+        display.println("in this PSBT.");
+      }
       display.println("Returning to menu...");
+      display.display();
+      delay(2500);
+      currentState = MAIN_MENU;
+      break;
+
+    case TX_SIGN_ERROR:
+      display.setCursor(0, 10);
+      display.setTextSize(2);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.println("SIGN FAILED");
+      display.setTextColor(SSD1306_WHITE);
+      display.setTextSize(1);
+      display.println("");
+      display.print("SE error: ");
+      display.println(txSignError);
+      display.println("No PSBT returned.");
       display.display();
       delay(2500);
       currentState = MAIN_MENU;
@@ -1077,21 +1109,14 @@ void renderCurrentState() {
 
 // --- SECURE PROCESSING LOGIC ---
 void executeSigningSequence() {
-  display.clearDisplay();
-  display.setCursor(0, 15);
-  display.println("Parsing UTXOs...");
-  display.display();
-  delay(600);
-
-  display.println("Hashing Payload...");
-  display.display();
-  delay(500);
-
-  display.println("Calling Secure Element...");
-  display.display();
-  delay(1000);
-
-  currentState = TX_SUCCESS;
+  int signed_count = psbt_sign(&txReviewPsbt);
+  if (signed_count < 0) {
+    txSignError = signed_count;
+    currentState = TX_SIGN_ERROR;
+  } else {
+    txSignCount = signed_count;
+    currentState = TX_SUCCESS;
+  }
 }
 
 void showBootSplash() {
