@@ -22,7 +22,7 @@ Thumbs.db
 # Local configuration and secrets
 # Don't track your private WiFi passwords or API keys
 secrets.h
-
-
 scripts/*/
+opencode.json
+.env.*
 
