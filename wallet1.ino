@@ -9,6 +9,7 @@
 #include "wallet_storage.h"
 #include "bip39.h"
 #include "address.h"
+#include "qr_renderer.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -39,6 +40,7 @@ enum WalletState {
   MAIN_MENU,
   SHOW_BALANCE,
   SHOW_ADDRESS,
+  QR_DISPLAY,
   SIGN_TX,
   PQC_STATUS,
   TX_SUCCESS,
@@ -87,6 +89,11 @@ bool restorePassphrase = false;
 char currentAddressStr[MAX_ADDRESS_LEN] = "";
 uint8_t addressTypeIdx = 1;
 uint32_t addressIndex = 0;
+
+// --- QR STATE ---
+uint8_t qrBuffer[QR_MAX_BUFFER_SIZE];
+QRCode qrCode;
+bool qrValid = false;
 
 // --- DEVICE UID (ESP32) ---
 void pin_get_device_uid(uint8_t uid[8]) {
@@ -393,6 +400,15 @@ void handleNavigation() {
         addressTypeIdx = (addressTypeIdx + 1) % 3;
         updateAddressDisplay();
       } else if (confirmPressed) {
+        qrValid = (qr_init(currentAddressStr, &qrCode, qrBuffer) == 0);
+        currentState = QR_DISPLAY;
+      }
+      break;
+
+    case QR_DISPLAY:
+      if (cancelPressed) {
+        currentState = SHOW_ADDRESS;
+      } else if (confirmPressed) {
         currentState = MAIN_MENU;
       }
       break;
@@ -683,7 +699,35 @@ void renderCurrentState() {
       display.print("Addr #");
       display.print(addressIndex);
       display.setCursor(0, 56);
-      display.print("CANCEL=cycle type  CONFIRM=back");
+      display.print("CANCEL=cycle type  CONFIRM=QR");
+      break;
+
+    case QR_DISPLAY:
+      if (qrValid) {
+        uint8_t size = qrCode.size;
+        uint8_t scale = 1;
+        if (size <= 21) scale = 3;
+        else if (size <= 25) scale = 2;
+        else scale = 1;
+        int offsetX = (128 - size * scale) / 2;
+        int offsetY = (64 - size * scale) / 2;
+        for (uint8_t y = 0; y < size; y++) {
+          for (uint8_t x = 0; x < size; x++) {
+            if (qrcode_getModule(&qrCode, x, y)) {
+              display.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale, SSD1306_WHITE);
+            }
+          }
+        }
+      } else {
+        display.setCursor(0, 20);
+        display.println("Address too long");
+        display.setCursor(0, 32);
+        display.println("for QR - use");
+        display.setCursor(0, 44);
+        display.println("text view");
+      }
+      display.setCursor(0, 56);
+      display.print("CANCEL=text  CONFIRM=menu");
       break;
 
     case SIGN_TX:
