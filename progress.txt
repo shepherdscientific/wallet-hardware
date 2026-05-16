@@ -85,3 +85,14 @@ Patterns discovered:
 - HMAC pattern: hash key if > block size, XOR with ipad(0x36)/opad(0x5C), two-pass hash.
 - PIN-in-SE pattern: binary objects stored via store_key, read via read_object. Object IDs in se051_hal.h. Check existence by attempted read.
 - Factory reset: delete all known SE objects, best-effort (ignore individual delete errors).
+
+### 2026-05-16: US-006 — Mnemonic Display Ceremony (Word-by-Word)
+- Updated `wallet1.ino`: added MNEMONIC_DISPLAY and MNEMONIC_VERIFY states to flow before PIN setup
+- `startMnemonicCeremony()`: generates BIP39 mnemonic via bip39_generate() on first boot, transitions to MNEMONIC_DISPLAY
+- Word display: one word at a time in textSize 2; CANCEL advances, CONFIRM on word 24 starts verification
+- `startVerification()`: picks 3 distinct random word positions (se051_get_random), user confirms each via CANCEL scroll + CONFIRM select
+- Verification failure resets index to word 1 and returns to MNEMONIC_DISPLAY
+- Verification success: wallet_generate_seed() stores keys in SE, secureZeroMnemonic() wipes RAM, proceeds to PIN_SETUP
+- Auto-dim: OLED blanks after 30 s of no button press during ceremony; any button restores display
+- setup() now checks wallet_is_initialized() to detect first-boot; ceremony only runs when wallet is uninitialized
+- All 71 existing unit tests continue to pass

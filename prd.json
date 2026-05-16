@@ -130,7 +130,7 @@
         "Mnemonic RAM buffer is zeroed immediately after verification passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Word verification picks random indices; use se051_get_random() for index selection. This prevents the user from skipping the backup step."
     },
     {
