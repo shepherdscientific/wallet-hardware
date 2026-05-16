@@ -425,6 +425,12 @@ void loop() {
   delay(30);
 }
 
+// Enter DEVICE_ID_DISPLAY after PIN entry on every boot.
+// On first setup (no anti-phish stored), generates new 4-word identity
+// and exports PAIRING:<words>\n over USB. The companion app MUST store
+// these words and visually display them on every connection so the user
+// can verify the device OLED matches. See wallet_storage.cpp for the
+// full anti-phishing threat model documentation.
 void enterDeviceIdDisplay() {
   if (wallet_has_anti_phish()) {
     wallet_get_anti_phish(antiPhishWords);

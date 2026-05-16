@@ -148,6 +148,31 @@ bool wallet_set_passphrase_flag(bool has) {
   return se051_store_key(SE051_OBJ_HAS_PASSPHRASE, &flag, 1) == SE_OK;
 }
 
+//
+// Anti-phishing device pairing code — threat model:
+//
+// This generates a 4-word BIP39-encoded device identity on first setup.
+// The code is exported once over USB as PAIRING:<4words>\n so the companion
+// app can store it. On every subsequent boot, the same 4 words are displayed
+// on the OLED for 3 seconds after PIN entry. The user must visually confirm
+// the words match what the companion app shows.
+//
+// What this protects against:
+//   - Cloned device with different SE serial (anti-phish words differ)
+//   - Fake companion app that hasn't seen the device's pairing code
+//
+// Limitations (documented threat model):
+//   - A sophisticated attacker who modifies the firmware can display a fake
+//     code that matches their own companion app. This raises the bar but is
+//     not a cryptographic guarantee — it relies on the user's visual attention.
+//   - The companion app must store and verify the pairing code on every
+//     connection. If the app is compromised, the anti-phish check is bypassed.
+//   - Secure boot (US-023) is the primary defense against firmware modification.
+//
+// The anti-phish code is stored in SE object 0x04 and can only be reset via
+// a full factory reset (wallet_factory_reset()). It persists across wallet
+// restores since it identifies the device, not the wallet.
+//
 bool wallet_generate_anti_phish(void) {
   uint8_t rnd[8] = {0};
 
