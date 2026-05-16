@@ -15,6 +15,10 @@ bool wallet_generate_seed(const char mnemonic[BIP39_MNEMONIC_WORDS][BIP39_WORD_M
 
 bool wallet_is_initialized(void);
 
+bool wallet_has_passphrase(void);
+
+bool wallet_set_passphrase_flag(bool has);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,6 +2,7 @@
 
 #include "wallet_storage.h"
 #include "se051_hal.h"
+#include "pin_manager.h"
 #include "sha512.h"
 #include "hmac_sha512.h"
 #include "bip39.h"
@@ -235,6 +236,45 @@ int main(void) {
               wallet_is_initialized();
     if (ok) PASS();
     else FAIL("mnemonic processing failed");
+  }
+
+  TEST("wallet_has_passphrase returns false by default");
+  {
+    se051_delete_key(SE051_OBJ_HAS_PASSPHRASE);
+    if (!wallet_has_passphrase()) PASS();
+    else FAIL("should return false when no passphrase flag set");
+  }
+
+  TEST("wallet_set_passphrase_flag(true) works");
+  {
+    if (wallet_set_passphrase_flag(true)) PASS();
+    else FAIL("setting passphrase flag failed");
+  }
+
+  TEST("wallet_has_passphrase returns true after set");
+  {
+    if (wallet_has_passphrase()) PASS();
+    else FAIL("should return true after flag was set");
+  }
+
+  TEST("wallet_set_passphrase_flag(false) clears the flag");
+  {
+    if (wallet_set_passphrase_flag(false)) PASS();
+    else FAIL("clearing passphrase flag failed");
+  }
+
+  TEST("wallet_has_passphrase returns false after clear");
+  {
+    if (!wallet_has_passphrase()) PASS();
+    else FAIL("should return false after flag was cleared");
+  }
+
+  TEST("passphrase flag survives factory reset (deleted)");
+  {
+    wallet_set_passphrase_flag(true);
+    wallet_factory_reset();
+    if (!wallet_has_passphrase()) PASS();
+    else FAIL("passphrase flag should be deleted by factory reset");
   }
 
   printf("\n=== Results: %d/%d passed, %d failed ===\n",

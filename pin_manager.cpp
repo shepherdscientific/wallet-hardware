@@ -107,4 +107,5 @@ void wallet_factory_reset(void) {
   se051_delete_key(SE051_OBJ_ANTI_PHISH);
   se051_delete_key(SE051_OBJ_PIN_COUNTER);
   se051_delete_key(SE051_OBJ_FW_HASH);
+  se051_delete_key(SE051_OBJ_HAS_PASSPHRASE);
 }

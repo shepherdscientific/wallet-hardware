@@ -133,3 +133,17 @@ bool wallet_is_initialized(void) {
   if (se051_get_pubkey(SE051_KEY_CHAIN_CODE, pubkey) != SE_OK) return false;
   return true;
 }
+
+bool wallet_has_passphrase(void) {
+  uint8_t flag[1] = {0};
+  size_t out_len = 0;
+  if (se051_read_object(SE051_OBJ_HAS_PASSPHRASE, flag, 1, &out_len) != SE_OK) {
+    return false;
+  }
+  return (out_len == 1 && flag[0] == 1);
+}
+
+bool wallet_set_passphrase_flag(bool has) {
+  uint8_t flag = has ? 1 : 0;
+  return se051_store_key(SE051_OBJ_HAS_PASSPHRASE, &flag, 1) == SE_OK;
+}

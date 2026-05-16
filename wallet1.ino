@@ -38,6 +38,9 @@ enum WalletState {
   RESTORE_ERROR,
   RESTORE_COMPLETE,
   RESTORE_PASSPHRASE,
+  PASSPHRASE_PROMPT,
+  PASSPHRASE_ENTRY,
+  BOOT_PASSPHRASE,
   PIN_SETUP,
   PIN_ENTRY,
   MAIN_MENU,
@@ -90,6 +93,20 @@ uint16_t restoreMatchPos = 0;
 unsigned long restoreStartTime = 0;
 char restoreError[32] = "";
 bool restorePassphrase = false;
+
+// --- PASSPHRASE ENTRY STATE ---
+static const char PASSPHRASE_CHARS[] =
+  "abcdefghijklmnopqrstuvwxyz"
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  "0123456789"
+  "!@#$%^&*()-_=+.,;:'\"[]{}<>?/";
+#define PASSPHRASE_CHAR_COUNT (sizeof(PASSPHRASE_CHARS) - 1)
+char passphrase[65];
+uint8_t passphraseLen;
+uint16_t passphraseCharIdx;
+bool passphraseDone;
+char sessionPassphrase[65];
+bool passphraseIsNewWallet;
 
 // --- ADDRESS STATE ---
 char currentAddressStr[MAX_ADDRESS_LEN] = "";
@@ -401,13 +418,9 @@ void handleNavigation() {
           mnemonicVerifyStep++;
           mnemonicVerifyScroll = 0;
           if (mnemonicVerifyStep >= 3) {
-            wallet_generate_seed(mnemonicWords, NULL);
-            secureZeroMnemonic();
-            currentState = PIN_SETUP;
-            pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
-            pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
-            pinPosition = 0;
-            pinDigitValue = 0;
+            passphraseIsNewWallet = true;
+            menuIndex = 0;
+            currentState = PASSPHRASE_PROMPT;
           }
         } else {
           mnemonicWordIndex = 0;
@@ -446,7 +459,12 @@ void handleNavigation() {
           if (pin_verify(pinDigits)) {
             pin_reset_attempts();
             pinAttempts = 0;
-            currentState = MAIN_MENU;
+            if (wallet_has_passphrase()) {
+              initSessionPassphraseEntry();
+              currentState = BOOT_PASSPHRASE;
+            } else {
+              currentState = MAIN_MENU;
+            }
           } else {
             pin_increment_attempts();
             pinAttempts = pin_get_attempts();
@@ -533,13 +551,20 @@ void handleNavigation() {
         menuIndex = (menuIndex + 1) % 2;
       } else if (confirmPressed) {
         restorePassphrase = (menuIndex == 1);
-        wallet_generate_seed(restoreWords, NULL);
-        secureZeroRestore();
-        currentState = PIN_SETUP;
-        pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
-        pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
-        pinPosition = 0;
-        pinDigitValue = 0;
+        if (restorePassphrase) {
+          passphraseIsNewWallet = false;
+          initPassphraseEntry();
+          currentState = PASSPHRASE_ENTRY;
+        } else {
+          wallet_generate_seed(restoreWords, NULL);
+          wallet_set_passphrase_flag(false);
+          secureZeroRestore();
+          currentState = PIN_SETUP;
+          pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+          pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+          pinPosition = 0;
+          pinDigitValue = 0;
+        }
       }
       break;
 
@@ -556,6 +581,80 @@ void handleNavigation() {
       break;
 
     case RESTORE_COMPLETE:
+      break;
+
+    case PASSPHRASE_PROMPT:
+      if (cancelPressed) {
+        menuIndex = (menuIndex + 1) % 2;
+      } else if (confirmPressed) {
+        if (menuIndex == 1) {
+          initPassphraseEntry();
+          currentState = PASSPHRASE_ENTRY;
+        } else {
+          if (passphraseIsNewWallet) {
+            wallet_generate_seed(mnemonicWords, NULL);
+            wallet_set_passphrase_flag(false);
+            secureZeroMnemonic();
+          } else {
+            wallet_generate_seed(restoreWords, NULL);
+            wallet_set_passphrase_flag(false);
+            secureZeroRestore();
+          }
+          currentState = PIN_SETUP;
+          pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+          pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+          pinPosition = 0;
+          pinDigitValue = 0;
+        }
+      }
+      break;
+
+    case PASSPHRASE_ENTRY:
+      if (cancelPressed) {
+        passphraseCharIdx = (passphraseCharIdx + 1) % (PASSPHRASE_CHAR_COUNT + 1);
+      } else if (confirmPressed) {
+        if (passphraseCharIdx >= PASSPHRASE_CHAR_COUNT) {
+          passphraseDone = true;
+          if (passphraseIsNewWallet) {
+            wallet_generate_seed(mnemonicWords, passphrase);
+            wallet_set_passphrase_flag(passphraseLen > 0);
+            secureZeroMnemonic();
+            secureZeroPassphrase();
+          } else {
+            wallet_generate_seed(restoreWords, passphrase);
+            wallet_set_passphrase_flag(passphraseLen > 0);
+            secureZeroRestore();
+            secureZeroPassphrase();
+          }
+          currentState = PIN_SETUP;
+          pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+          pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+          pinPosition = 0;
+          pinDigitValue = 0;
+        } else if (passphraseLen < 64) {
+          passphrase[passphraseLen] = PASSPHRASE_CHARS[passphraseCharIdx];
+          passphraseLen++;
+          passphrase[passphraseLen] = '\0';
+        }
+      }
+      break;
+
+    case BOOT_PASSPHRASE:
+      if (cancelPressed) {
+        passphraseCharIdx = (passphraseCharIdx + 1) % (PASSPHRASE_CHAR_COUNT + 1);
+      } else if (confirmPressed) {
+        if (passphraseCharIdx >= PASSPHRASE_CHAR_COUNT) {
+          passphraseDone = true;
+          strncpy(sessionPassphrase, passphrase, sizeof(sessionPassphrase) - 1);
+          sessionPassphrase[sizeof(sessionPassphrase) - 1] = '\0';
+          secureZeroPassphrase();
+          currentState = MAIN_MENU;
+        } else if (passphraseLen < 64) {
+          passphrase[passphraseLen] = PASSPHRASE_CHARS[passphraseCharIdx];
+          passphraseLen++;
+          passphrase[passphraseLen] = '\0';
+        }
+      }
       break;
 
     case MAIN_MENU:
@@ -820,6 +919,55 @@ void renderCurrentState() {
       display.setCursor(0, 54);
       display.print(menuIndex == 1 ? "> YES" : "  YES");
       break;
+
+    case PASSPHRASE_PROMPT:
+      display.setCursor(0, 0);
+      display.println("SEED CONFIRMED");
+      display.println("---------------------");
+      display.setCursor(0, 20);
+      display.println("Add Passphrase?");
+      display.setCursor(0, 32);
+      display.println("(BIP39 25th word)");
+      display.setCursor(0, 44);
+      display.print(menuIndex == 0 ? "> NO (skip)" : "  NO (skip)");
+      display.setCursor(0, 54);
+      display.print(menuIndex == 1 ? "> YES" : "  YES");
+      break;
+
+    case PASSPHRASE_ENTRY:
+    case BOOT_PASSPHRASE: {
+      const char *title = (currentState == BOOT_PASSPHRASE) ? "ENTER PASSPHRASE" : "SET PASSPHRASE";
+      display.setCursor(0, 0);
+      display.println(title);
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.print("Len: ");
+      display.print(passphraseLen);
+      display.print("/64  Chars");
+      display.setCursor(0, 28);
+      display.print("...");
+      uint8_t previewStart = (passphraseLen > 3) ? passphraseLen - 3 : 0;
+      for (uint8_t i = previewStart; i < passphraseLen; i++) {
+        display.print('*');
+      }
+      display.setCursor(0, 40);
+      bool atDone = (passphraseCharIdx >= PASSPHRASE_CHAR_COUNT);
+      if (atDone) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print("> [DONE]");
+      } else {
+        display.print("> ");
+        if (PASSPHRASE_CHARS[passphraseCharIdx] == ' ') {
+          display.print("[SPACE]");
+        } else {
+          display.print(PASSPHRASE_CHARS[passphraseCharIdx]);
+        }
+      }
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=sel");
+      break;
+    }
 
     case PIN_SETUP:
       display.setCursor(0, 0);
@@ -1204,6 +1352,30 @@ void secureZeroRestore() {
   restorePrefix[0] = '\0';
   restoreLetter = 'a';
   restoreMatchPos = 0;
+}
+
+void initPassphraseEntry() {
+  memset(passphrase, 0, sizeof(passphrase));
+  passphraseLen = 0;
+  passphraseCharIdx = 0;
+  passphraseDone = false;
+}
+
+void initSessionPassphraseEntry() {
+  memset(passphrase, 0, sizeof(passphrase));
+  memset(sessionPassphrase, 0, sizeof(sessionPassphrase));
+  passphraseLen = 0;
+  passphraseCharIdx = 0;
+  passphraseDone = false;
+  passphraseIsNewWallet = false;
+}
+
+void secureZeroPassphrase() {
+  volatile uint8_t *p = (volatile uint8_t *)passphrase;
+  for (size_t i = 0; i < sizeof(passphrase); i++) *p++ = 0;
+  passphraseLen = 0;
+  passphraseCharIdx = 0;
+  passphraseDone = false;
 }
 
 void startRestoreProcess() {

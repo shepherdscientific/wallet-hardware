@@ -28,7 +28,8 @@ extern "C" {
 #define SE051_OBJ_PIN_HASH      0x03
 #define SE051_OBJ_ANTI_PHISH    0x04
 #define SE051_OBJ_PIN_COUNTER   0x05
-#define SE051_OBJ_FW_HASH       0x06
+#define SE051_OBJ_FW_HASH          0x06
+#define SE051_OBJ_HAS_PASSPHRASE  0x07
 
 // ─── Buffer sizes ────────────────────────────────────────────────────────
 #define SE051_RANDOM_LEN         32
