@@ -7,6 +7,7 @@
 #include "se051_hal.h"
 #include "pin_manager.h"
 #include "wallet_storage.h"
+#include "bip39.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -24,6 +25,8 @@ const char* password = SECRET_PASS;
 
 // --- WALLET STATE MACHINE ---
 enum WalletState {
+  MNEMONIC_DISPLAY,
+  MNEMONIC_VERIFY,
   PIN_SETUP,
   PIN_ENTRY,
   MAIN_MENU,
@@ -50,6 +53,15 @@ uint8_t pinDigits[6] = {0};
 uint8_t pinPosition = 0;
 uint8_t pinDigitValue = 0;
 uint8_t pinAttempts = 0;
+
+// --- MNEMONIC CEREMONY STATE ---
+char mnemonicWords[24][9];
+uint8_t mnemonicWordIndex = 0;
+uint8_t mnemonicVerifyIndices[3] = {0};
+uint8_t mnemonicVerifyStep = 0;
+uint8_t mnemonicVerifyScroll = 0;
+bool displayOn = true;
+unsigned long lastActivityMs = 0;
 
 // --- REAL BITCOIN DATA (MOCK MINTED) ---
 const char* BTC_ADDRESS = "bc1p5d7txrekgvk0llknw8vkm6680zhv93";
@@ -98,6 +110,8 @@ void setup() {
     pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
     pinPosition = 0;
     pinDigitValue = 0;
+  } else if (!wallet_is_initialized()) {
+    startMnemonicCeremony();
   } else {
     currentState = PIN_SETUP;
     pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
@@ -110,6 +124,11 @@ void setup() {
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.handle();
+  }
+
+  if ((currentState == MNEMONIC_DISPLAY || currentState == MNEMONIC_VERIFY) &&
+      displayOn && (millis() - lastActivityMs > 30000)) {
+    displayOn = false;
   }
 
   handleNavigation();
@@ -127,6 +146,48 @@ void handleNavigation() {
   delay(180);
 
   switch (currentState) {
+    case MNEMONIC_DISPLAY:
+      if (confirmPressed || cancelPressed) {
+        lastActivityMs = millis();
+        displayOn = true;
+      }
+      if (confirmPressed && mnemonicWordIndex == 23) {
+        startVerification();
+      } else if (cancelPressed) {
+        mnemonicWordIndex = (mnemonicWordIndex + 1) % 24;
+      }
+      break;
+
+    case MNEMONIC_VERIFY:
+      if (confirmPressed || cancelPressed) {
+        lastActivityMs = millis();
+        displayOn = true;
+      }
+      if (cancelPressed) {
+        mnemonicVerifyScroll = (mnemonicVerifyScroll + 1) % 2048;
+      } else if (confirmPressed) {
+        uint8_t pos = mnemonicVerifyIndices[mnemonicVerifyStep];
+        if (strcmp(bip39_wordlist[mnemonicVerifyScroll], mnemonicWords[pos]) == 0) {
+          mnemonicVerifyStep++;
+          mnemonicVerifyScroll = 0;
+          if (mnemonicVerifyStep >= 3) {
+            wallet_generate_seed(mnemonicWords, NULL);
+            secureZeroMnemonic();
+            currentState = PIN_SETUP;
+            pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+            pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+            pinPosition = 0;
+            pinDigitValue = 0;
+          }
+        } else {
+          mnemonicWordIndex = 0;
+          mnemonicVerifyStep = 0;
+          mnemonicVerifyScroll = 0;
+          currentState = MNEMONIC_DISPLAY;
+        }
+      }
+      break;
+
     case PIN_SETUP:
       if (confirmPressed) {
         pinDigitValue = (pinDigitValue + 1) % 10;
@@ -213,6 +274,56 @@ void renderCurrentState() {
   display.setTextSize(1);
 
   switch (currentState) {
+    case MNEMONIC_DISPLAY:
+      if (!displayOn) {
+        display.display();
+        break;
+      }
+      display.setCursor(0, 0);
+      display.println("YOUR SEED WORDS");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.print("Word ");
+      display.print(mnemonicWordIndex + 1);
+      display.print(" of 24");
+      display.setCursor(0, 30);
+      display.setTextSize(2);
+      display.println(mnemonicWords[mnemonicWordIndex]);
+      display.setTextSize(1);
+      if (mnemonicWordIndex == 23) {
+        display.setCursor(0, 56);
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print(" [VERIFY] ");
+      } else {
+        display.setCursor(0, 56);
+        display.print("CANCEL=next CONFIRM on last=verify");
+      }
+      break;
+
+    case MNEMONIC_VERIFY:
+      if (!displayOn) {
+        display.display();
+        break;
+      }
+      display.setCursor(0, 0);
+      display.println("VERIFY SEED");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.print("Step ");
+      display.print(mnemonicVerifyStep + 1);
+      display.print(" of 3");
+      display.setCursor(0, 30);
+      display.print("Word #");
+      display.print(mnemonicVerifyIndices[mnemonicVerifyStep] + 1);
+      display.print("?");
+      display.setCursor(0, 42);
+      display.setTextSize(2);
+      display.println(bip39_wordlist[mnemonicVerifyScroll]);
+      display.setTextSize(1);
+      display.setCursor(0, 56);
+      display.print("CANCEL=scroll CONFIRM=select");
+      break;
+
     case PIN_SETUP:
       display.setCursor(0, 0);
       display.println("SET PIN");
@@ -387,4 +498,52 @@ void showBootSplash() {
   display.println("SECURE APPARATUS");
   display.display();
   delay(2000);
+}
+
+// --- MNEMONIC CEREMONY HELPERS ---
+void secureZeroMnemonic() {
+  volatile uint8_t *p = (volatile uint8_t *)mnemonicWords;
+  for (size_t i = 0; i < sizeof(mnemonicWords); i++) *p++ = 0;
+}
+
+void startMnemonicCeremony() {
+  memset(mnemonicWords, 0, sizeof(mnemonicWords));
+  mnemonicWordIndex = 0;
+  mnemonicVerifyIndices[0] = 0;
+  mnemonicVerifyIndices[1] = 0;
+  mnemonicVerifyIndices[2] = 0;
+  mnemonicVerifyStep = 0;
+  mnemonicVerifyScroll = 0;
+  displayOn = true;
+  lastActivityMs = millis();
+
+  if (!bip39_generate(mnemonicWords)) {
+    currentState = WALLET_WIPED;
+    return;
+  }
+  currentState = MNEMONIC_DISPLAY;
+}
+
+void startVerification() {
+  mnemonicVerifyStep = 0;
+  mnemonicVerifyScroll = 0;
+
+  for (int i = 0; i < 3; i++) {
+    uint8_t rnd;
+    bool distinct;
+    do {
+      se051_get_random(&rnd, 1);
+      rnd = rnd % 24;
+      distinct = true;
+      for (int j = 0; j < i; j++) {
+        if (mnemonicVerifyIndices[j] == rnd) {
+          distinct = false;
+          break;
+        }
+      }
+    } while (!distinct);
+    mnemonicVerifyIndices[i] = rnd;
+  }
+
+  currentState = MNEMONIC_VERIFY;
 }
