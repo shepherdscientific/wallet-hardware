@@ -537,7 +537,7 @@
         "These metadata fields visible on the transaction details scroll view (CANCEL to scroll)"
       ],
       "priority": 25,
-      "passes": false,
+      "passes": true,
       "notes": "RBF signalling is nSequence < 0xFFFFFFFE per BIP125. This is an informational feature; the device should sign RBF transactions normally after user acknowledgement."
     },
     {

@@ -514,3 +514,24 @@ New files:
 - test_watchdog.cpp: 7 unit tests
 
 Test results: 37 tests pass (10 settings + 12 account_manager + 8 coin_control + 7 watchdog)
+
+### 2026-05-17: US-025 — RBF Flag Detection and Fee Bump Warning
+- Added TX_RBF_CONFIRM state: shown before signing prompt when RBF detected (nSequence < 0xFFFFFFFE)
+  - Full-screen warning: "RBF ENABLED — Tx can be replaced. Continue?" CONFIRM=Yes/CANCEL=No
+- Multi-page scrollable TX_FEE_REVIEW: CANCEL cycles through fee summary → locktime detail → per-input metadata
+  - Page 0: Existing fee summary (CANCEL=details CONFIRM=next)
+  - Page 1 (if locktime!=0): LOCKTIME DETAIL with formatted block height or YYYY-MM-DD date
+  - Pages 2+: Per-input segwit version and nSequence value
+  - CANCEL past last page returns to main menu
+- New helpers:
+  - get_input_segwit_label(): detects SegWit v0 (P2WPKH), SegWit v0 (P2WSH), Taproot v1 from witness UTXO scriptPubKey; handles compactSize prefix byte from PSBT parser
+  - format_locktime(): formats nLockTime as "Locktime: none", "Locktime: Block NNNN" (< 500M), or "Locktime: YYYY-MM-DD" (>= 500M Unix timestamp)
+- txMetaPage state variable tracks scroll position; reset on all 3 TX_FEE_REVIEW entry points (WAIT_PSBT, DEMO PSBT, COIN_CONTROL)
+- test_tx_metadata.cpp: 19 unit tests covering RBF detection (5 tests), segwit label detection (5 tests), locktime formatting (4 tests), PSBT parse integration (5 tests: nSequence, locktime, witness UTXO extraction)
+- All 56 tests pass (19 new + 37 existing)
+
+Patterns discovered:
+- Witness UTXO stored in PSBT struct includes compactSize length prefix byte (script_pubkey_len = actual_len + 1)
+- PSBT_IN_WITNESS_UTXO = 0x01 (not 0x06 which is PSBT_IN_BIP32_DERIVATION)
+- Multi-page transaction review: reuse same state (TX_FEE_REVIEW) with metaPage counter instead of creating separate states per detail page
+- segwit label detection must handle both raw scriptPubKey (direct struct assignment) and compactSize-prefixed format (from PSBT parser)
