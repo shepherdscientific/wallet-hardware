@@ -346,8 +346,8 @@
         "Companion app should store and verify the code each connection; document this in comments"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": "This is a UX-layer protection. It cannot prevent a sophisticated attacker who modifies the firmware to display a fake code, but it raises the bar considerably. Document the threat model clearly."
+      "passes": true,
+      "notes": "This is a UX-layer protection. It cannot prevent a sophisticated attacker who modifies the firmware to display a fake code, but it raises the bar considerably. Document the threat model clearly. | Implementation complete. Anti-phish code generated from SE TRNG via wallet_generate_anti_phish(), stored in SE object 0x04, displayed on OLED for 3s after every PIN entry, exported as PAIRING:<4words>\n on first setup, deleted only via wallet_factory_reset(). Threat model documented in wallet_storage.cpp. 11 dedicated tests pass."
     },
     {
       "id": "US-017",

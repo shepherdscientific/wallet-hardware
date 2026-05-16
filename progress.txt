@@ -1,5 +1,17 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-016 — Anti-Phishing Device Pairing Code
+- Implementation was already complete from prior iteration; added threat model documentation
+- `wallet_generate_anti_phish()`: 4-word BIP39 identity from SE TRNG, stored in SE object 0x04
+- `wallet_has_anti_phish()` / `wallet_get_anti_phish()`: read back pairing code
+- `enterDeviceIdDisplay()`: generates on first setup, displays after every PIN entry for 3 seconds
+- PAIRING:<4words>\n exported over USB CDC on first setup only
+- `wallet_factory_reset()` deletes SE object 0x04; anti-phish code survives wallet restores
+- Added detailed threat model documentation comment in wallet_storage.cpp explaining protections (clone detection, fake companion app detection) and limitations (firmware modification can display fake code)
+- Added companion app behavior documentation in wallet1.ino
+- 11 dedicated tests pass (generation, retrieval, validity, factory reset, serial output format)
+- All 228 tests pass across 14 test suites
+
 ### 2026-05-16: US-015 — Address Verification Flow (Anti-Substitution)
 - Added `serial_send_verified()` / `serial_send_mismatch()` to serial_transport (USB responses: "VERIFIED\n" / "MISMATCH\n")
 - Added three new wallet states: VERIFY_ADDRESS (standalone display + USB poll), VERIFY_MATCH (verified OK indicator), VERIFY_MISMATCH (flash alarm 3 cycles)
