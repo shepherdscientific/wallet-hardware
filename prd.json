@@ -68,7 +68,7 @@
         "Storage failure causes immediate error screen and aborts setup; no partial state persists"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "SE051C2 supports ECC key injection. Chain code may need to be stored as a binary file object (not a key object) since it is symmetric data."
     },
     {

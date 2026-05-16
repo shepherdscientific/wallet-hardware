@@ -15,3 +15,23 @@
 Patterns discovered:
 - BIP39 bit manipulation: encode (read 2-3 bytes, shift right by 5/13 minus bit_shift, mask 0x7FF) and decode (first byte gets >>3+bit_shift, remaining bits go to subsequent bytes)
 - Host-based testing pattern: `g++ -DUSE_SE_STUB` links stub HAL + new module + test file → self-contained test binary
+
+### 2026-05-16: US-003 — Secure Key Storage: Seed → SE051C2 Key Objects
+- Created `sha512.h/cpp`: SHA-512 using CommonCrypto on macOS with portable fallback for ESP32
+- Created `hmac_sha512.h/cpp`: HMAC-SHA512 verified against RFC 4231 test cases 1-3
+- Created `wallet_storage.h/cpp`: Full initialization pipeline
+- `wallet_generate_seed()`: BIP39 mnemonic → PBKDF2-HMAC-SHA512 (2048 rounds) → 64-byte seed → HMAC-SHA512("Bitcoin seed", S) → master key (k) + chain code (c) → store in SE keys 0x01/0x02
+- `wallet_is_initialized()`: true only when both SE objects 0x01 and 0x02 exist; uses se051_get_pubkey for existence check
+- Partial state cleanup: if key 0x02 store fails, key 0x01 is deleted before returning error
+- All sensitive buffers (seed, master key, chain code, mnemonic string) zeroed with volatile memset
+- 16 unit tests: SHA-512 vectors, HMAC RFC 4231, BIP32 test vector 1, wallet init flow, partial state, failure cases
+- Tests compile with `g++ -DUSE_SE_STUB -I. sha512.cpp hmac_sha512.cpp sha256.cpp bip39.cpp wallet_storage.cpp se051_hal_stub.cpp test_wallet_storage.cpp`
+
+Fix from aider-review:
+- se051_delete_key in se051_hal_esp.cpp: replaced APDU_INS_PUT_DATA (0xDA) with APDU_INS_DELETE_KEY (0xE0)
+
+Patterns discovered:
+- APDU instruction byte mapping: each SE operation needs the correct INS byte (DELETE_KEY=0xE0, PUT_DATA=0xDA, GET_DATA=0xCA, etc.)
+- Partial state cleanup pattern: multi-step SE stores must undo on failure
+- Cryptographic test vectors: always verify against standard (FIPS 180-4, RFC 4231, BIP32)
+- Platform abstraction for crypto: use system CommonCrypto on macOS, fallback for target
