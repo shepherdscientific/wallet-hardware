@@ -62,3 +62,26 @@ Patterns discovered:
 
 Known limitations:
 - EC scalar multiplication parity/sign bug in doubling for large scalars (k > 3). Small scalars correct. Affects non-hardened CKD and pubkey_from_priv for keys > 3. Hardened CKD (HMAC-SHA512 only) unaffected and verified against BIP32 vectors. Fix pending.
+
+### 2026-05-16: US-005 — PIN Setup and Entry UI (2-Button Interface)
+- Created `hmac_sha256.h/cpp`: HMAC-SHA256 following same pattern as HMAC-SHA512
+- Extracted sha256 incremental API: `sha256_init/update/final` with opaque `sha256_ctx` (matching sha512.h pattern)
+- Created `pin_manager.h/cpp`: PIN lifecycle backed by SE051C2
+  - PIN hash = HMAC-SHA256(device_uid, PIN_digits[6]), stored in SE object 0x03
+  - `pin_setup()` / `pin_verify()` / `pin_change()` / `pin_reset()` — core PIN API
+  - Attempt counter (`pin_increment_attempts/reset_attempts`) in SE object 0x05
+  - `wallet_factory_reset()` — deletes all SE objects 0x01–0x06
+  - Stub device UID for CI; ESP32 uses `ESP.getEfuseMac()` in wallet1.ino
+- Updated `wallet1.ino`: PIN_SETUP + PIN_ENTRY states as entry points before MAIN_MENU
+  - CONFIRM=increment digit (0→9 wrap), CANCEL=lock digit and advance
+  - Visual progress: entered digits shown as '*', current digit in brackets
+  - 5 failed attempts → wallet_factory_reset() + WALLET_WIPED screen
+  - se051_init() called in setup() before PIN flow
+- 24 unit tests: HMAC-SHA256 RFC 4231, PIN lifecycle, attempt counter, factory reset, NULL safety
+- Tests compile with `g++ -DUSE_SE_STUB -I. sha256.cpp hmac_sha256.cpp se051_hal_stub.cpp pin_manager.cpp test_pin_manager.cpp`
+
+Patterns discovered:
+- Opaque context pattern: expose incremental crypto API using `typedef struct { uint8_t opaque[N]; } ctx_t;` in header. Public wrappers cast to internal type. N must exceed sizeof(internal struct).
+- HMAC pattern: hash key if > block size, XOR with ipad(0x36)/opad(0x5C), two-pass hash.
+- PIN-in-SE pattern: binary objects stored via store_key, read via read_object. Object IDs in se051_hal.h. Check existence by attempted read.
+- Factory reset: delete all known SE objects, best-effort (ignore individual delete errors).
