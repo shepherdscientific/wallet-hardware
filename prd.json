@@ -238,7 +238,7 @@
         "Display updates within 100 ms of receiving PSBT"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "Multi-output PSBTs require a scrollable list pattern: maintain output_index in state, CANCEL increments, CONFIRM signs. Change detection requires wallet to know its own derivation paths."
     },
     {
