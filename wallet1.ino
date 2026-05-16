@@ -25,8 +25,14 @@ const char* password = SECRET_PASS;
 
 // --- WALLET STATE MACHINE ---
 enum WalletState {
+  BOOT_MENU,
   MNEMONIC_DISPLAY,
   MNEMONIC_VERIFY,
+  MNEMONIC_RESTORE_LETTER,
+  MNEMONIC_RESTORE_WORD,
+  RESTORE_ERROR,
+  RESTORE_COMPLETE,
+  RESTORE_PASSPHRASE,
   PIN_SETUP,
   PIN_ENTRY,
   MAIN_MENU,
@@ -62,6 +68,19 @@ uint8_t mnemonicVerifyStep = 0;
 uint8_t mnemonicVerifyScroll = 0;
 bool displayOn = true;
 unsigned long lastActivityMs = 0;
+
+// --- WALLET RESTORE STATE ---
+char restoreWords[24][9];
+uint8_t restoreWordIdx = 0;
+char restorePrefix[5];
+uint8_t restorePrefixLen = 0;
+char restoreLetter = 'a';
+uint16_t restoreMatchStart = 0;
+uint16_t restoreMatchCount = 0;
+uint16_t restoreMatchPos = 0;
+unsigned long restoreStartTime = 0;
+char restoreError[32] = "";
+bool restorePassphrase = false;
 
 // --- REAL BITCOIN DATA (MOCK MINTED) ---
 const char* BTC_ADDRESS = "bc1p5d7txrekgvk0llknw8vkm6680zhv93";
@@ -111,7 +130,7 @@ void setup() {
     pinPosition = 0;
     pinDigitValue = 0;
   } else if (!wallet_is_initialized()) {
-    startMnemonicCeremony();
+    currentState = BOOT_MENU;
   } else {
     currentState = PIN_SETUP;
     pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
@@ -131,6 +150,17 @@ void loop() {
     displayOn = false;
   }
 
+  if ((currentState == MNEMONIC_RESTORE_LETTER || currentState == MNEMONIC_RESTORE_WORD) &&
+      (millis() - restoreStartTime > 300000)) {
+    memset(restoreWords, 0, sizeof(restoreWords));
+    restoreWordIdx = 0;
+    restorePrefixLen = 0;
+    restorePrefix[0] = '\0';
+    restoreLetter = 'a';
+    restoreMatchPos = 0;
+    currentState = BOOT_MENU;
+  }
+
   handleNavigation();
   renderCurrentState();
   delay(30);
@@ -146,6 +176,18 @@ void handleNavigation() {
   delay(180);
 
   switch (currentState) {
+    case BOOT_MENU:
+      if (cancelPressed) {
+        menuIndex = (menuIndex + 1) % 2;
+      } else if (confirmPressed) {
+        if (menuIndex == 0) {
+          startMnemonicCeremony();
+        } else {
+          startRestoreProcess();
+        }
+      }
+      break;
+
     case MNEMONIC_DISPLAY:
       if (confirmPressed || cancelPressed) {
         lastActivityMs = millis();
@@ -234,6 +276,100 @@ void handleNavigation() {
       }
       break;
 
+    case MNEMONIC_RESTORE_LETTER:
+      restoreStartTime = millis();
+      if (confirmPressed) {
+        restoreLetter = (restoreLetter == 'z') ? 'a' : restoreLetter + 1;
+        updateRestoreMatchesPreview();
+      } else if (cancelPressed) {
+        if (restorePrefixLen >= 4) {
+          if (restoreMatchCount > 0) {
+            restoreMatchPos = 0;
+            currentState = MNEMONIC_RESTORE_WORD;
+          }
+          break;
+        }
+        restorePrefix[restorePrefixLen] = restoreLetter;
+        restorePrefixLen++;
+        restorePrefix[restorePrefixLen] = '\0';
+        updateRestoreMatches();
+        if (restorePrefixLen >= 3 && restoreMatchCount > 0 && restoreMatchCount <= 30) {
+          restoreMatchPos = 0;
+          currentState = MNEMONIC_RESTORE_WORD;
+        } else {
+          restoreLetter = 'a';
+        }
+      }
+      break;
+
+    case MNEMONIC_RESTORE_WORD:
+      restoreStartTime = millis();
+      if (restoreMatchCount == 0) {
+        restorePrefixLen = 0;
+        restorePrefix[0] = '\0';
+        restoreLetter = 'a';
+        restoreMatchPos = 0;
+        updateRestoreMatches();
+        currentState = MNEMONIC_RESTORE_LETTER;
+        break;
+      }
+      if (cancelPressed) {
+        restoreMatchPos = (restoreMatchPos + 1) % restoreMatchCount;
+      } else if (confirmPressed) {
+        uint16_t selectedIdx = restoreMatchStart + restoreMatchPos;
+        strncpy(restoreWords[restoreWordIdx], bip39_wordlist[selectedIdx], 9);
+        restoreWords[restoreWordIdx][8] = '\0';
+        restoreWordIdx++;
+        if (restoreWordIdx >= 24) {
+          if (bip39_validate(restoreWords)) {
+            currentState = RESTORE_PASSPHRASE;
+            menuIndex = 0;
+          } else {
+            strncpy(restoreError, "Bad checksum - retry", 32);
+            restoreStartTime = millis();
+            currentState = RESTORE_ERROR;
+          }
+        } else {
+          restorePrefixLen = 0;
+          restorePrefix[0] = '\0';
+          restoreLetter = 'a';
+          restoreMatchPos = 0;
+          updateRestoreMatches();
+          currentState = MNEMONIC_RESTORE_LETTER;
+        }
+      }
+      break;
+
+    case RESTORE_PASSPHRASE:
+      if (cancelPressed) {
+        menuIndex = (menuIndex + 1) % 2;
+      } else if (confirmPressed) {
+        restorePassphrase = (menuIndex == 1);
+        wallet_generate_seed(restoreWords, NULL);
+        secureZeroRestore();
+        currentState = PIN_SETUP;
+        pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+        pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+        pinPosition = 0;
+        pinDigitValue = 0;
+      }
+      break;
+
+    case RESTORE_ERROR:
+      if (confirmPressed || cancelPressed) {
+        restoreWordIdx = 0;
+        restorePrefixLen = 0;
+        restorePrefix[0] = '\0';
+        restoreLetter = 'a';
+        restoreMatchPos = 0;
+        updateRestoreMatches();
+        currentState = MNEMONIC_RESTORE_LETTER;
+      }
+      break;
+
+    case RESTORE_COMPLETE:
+      break;
+
     case MAIN_MENU:
       if (cancelPressed) {
         menuIndex = (menuIndex + 1) % TOTAL_MENU_ITEMS;
@@ -274,6 +410,34 @@ void renderCurrentState() {
   display.setTextSize(1);
 
   switch (currentState) {
+    case BOOT_MENU:
+      display.setCursor(0, 0);
+      display.println("COINCUBE WALLET");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.setTextSize(2);
+      display.println("SETUP");
+      display.setTextSize(1);
+      display.setCursor(0, 38);
+      if (menuIndex == 0) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print(" New Wallet ");
+      } else {
+        display.print("  New Wallet");
+      }
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 48);
+      if (menuIndex == 1) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print(" Restore     ");
+      } else {
+        display.print("  Restore");
+      }
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=select");
+      break;
+
     case MNEMONIC_DISPLAY:
       if (!displayOn) {
         display.display();
@@ -322,6 +486,94 @@ void renderCurrentState() {
       display.setTextSize(1);
       display.setCursor(0, 56);
       display.print("CANCEL=scroll CONFIRM=select");
+      break;
+
+    case MNEMONIC_RESTORE_LETTER:
+      display.setCursor(0, 0);
+      display.println("RESTORE WALLET");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.print("Word ");
+      display.print(restoreWordIdx + 1);
+      display.print(" of 24");
+      display.setCursor(0, 28);
+      display.print("Prefix: ");
+      for (uint8_t i = 0; i < restorePrefixLen; i++) {
+        display.print(restorePrefix[i]);
+      }
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.print(restoreLetter);
+      display.setTextColor(SSD1306_WHITE);
+      for (uint8_t i = restorePrefixLen + 1; i < 4; i++) {
+        display.print('_');
+      }
+      display.setCursor(0, 38);
+      display.print("Matches: ");
+      display.print(restoreMatchCount);
+      display.print(" words");
+      if (restoreMatchCount > 0 && restoreMatchCount <= 30) {
+        display.setCursor(0, 50);
+        display.print(bip39_wordlist[restoreMatchStart]);
+      }
+      display.setCursor(0, 56);
+      display.print("CONFIRM=cycle CANCEL=lock");
+      break;
+
+    case MNEMONIC_RESTORE_WORD:
+      display.setCursor(0, 0);
+      display.print("Word ");
+      display.print(restoreWordIdx + 1);
+      display.print(" of 24  [");
+      display.print(restoreMatchCount);
+      display.println("]");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.setTextSize(2);
+      display.println(bip39_wordlist[restoreMatchStart + restoreMatchPos]);
+      display.setTextSize(1);
+      display.setCursor(0, 40);
+      if (restoreMatchCount > 1) {
+        if (restoreMatchPos > 0) {
+          display.print("^ ");
+          display.println(bip39_wordlist[restoreMatchStart + restoreMatchPos - 1]);
+        } else {
+          display.println("  (first match)");
+        }
+      }
+      display.setCursor(0, 50);
+      if (restoreMatchPos + 1 < restoreMatchCount) {
+        display.print("v ");
+        display.println(bip39_wordlist[restoreMatchStart + restoreMatchPos + 1]);
+      }
+      display.setCursor(0, 56);
+      display.print("CONFIRM=select CANCEL=scroll");
+      break;
+
+    case RESTORE_ERROR:
+      display.setCursor(0, 0);
+      display.println("RESTORE ERROR");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.setTextSize(1);
+      display.println(restoreError);
+      display.setCursor(0, 40);
+      display.println("Restarting...");
+      display.setCursor(0, 56);
+      display.print("Any button to retry");
+      break;
+
+    case RESTORE_PASSPHRASE:
+      display.setCursor(0, 0);
+      display.println("MNEMONIC ACCEPTED");
+      display.println("---------------------");
+      display.setCursor(0, 20);
+      display.println("24 words accepted.");
+      display.setCursor(0, 32);
+      display.println("Passphrase (25th word)?");
+      display.setCursor(0, 44);
+      display.print(menuIndex == 0 ? "> NO (skip)" : "  NO (skip)");
+      display.setCursor(0, 54);
+      display.print(menuIndex == 1 ? "> YES" : "  YES");
       break;
 
     case PIN_SETUP:
@@ -546,4 +798,46 @@ void startVerification() {
   }
 
   currentState = MNEMONIC_VERIFY;
+}
+
+// --- WALLET RESTORE HELPERS ---
+void updateRestoreMatches() {
+  restoreMatchCount = bip39_find_prefix(restorePrefix, &restoreMatchStart);
+}
+
+void updateRestoreMatchesPreview() {
+  char preview[6];
+  uint8_t i;
+  for (i = 0; i < restorePrefixLen && i < 4; i++) {
+    preview[i] = restorePrefix[i];
+  }
+  preview[i] = restoreLetter;
+  preview[i + 1] = '\0';
+  restoreMatchCount = bip39_find_prefix(preview, &restoreMatchStart);
+}
+
+void secureZeroRestore() {
+  volatile uint8_t *p = (volatile uint8_t *)restoreWords;
+  for (size_t i = 0; i < sizeof(restoreWords); i++) *p++ = 0;
+  restoreWordIdx = 0;
+  restorePrefixLen = 0;
+  restorePrefix[0] = '\0';
+  restoreLetter = 'a';
+  restoreMatchPos = 0;
+}
+
+void startRestoreProcess() {
+  memset(restoreWords, 0, sizeof(restoreWords));
+  restoreWordIdx = 0;
+  restorePrefixLen = 0;
+  restorePrefix[0] = '\0';
+  restoreLetter = 'a';
+  restoreMatchStart = 0;
+  restoreMatchCount = 0;
+  restoreMatchPos = 0;
+  restoreStartTime = millis();
+  restoreError[0] = '\0';
+  restorePassphrase = false;
+  updateRestoreMatches();
+  currentState = MNEMONIC_RESTORE_LETTER;
 }

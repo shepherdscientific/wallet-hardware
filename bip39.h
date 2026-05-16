@@ -23,6 +23,8 @@ bool bip39_validate(const char wordlist[BIP39_MNEMONIC_WORDS][BIP39_WORD_MAX_LEN
 
 uint16_t bip39_word_to_index(const char *word);
 
+uint16_t bip39_find_prefix(const char *prefix, uint16_t *first_match);
+
 #ifdef __cplusplus
 }
 #endif

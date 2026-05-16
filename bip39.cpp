@@ -363,6 +363,43 @@ uint16_t bip39_word_to_index(const char *word) {
   return 0xFFFF;
 }
 
+static bool str_starts_with(const char *str, const char *prefix) {
+  while (*prefix) {
+    if (*str != *prefix) return false;
+    str++;
+    prefix++;
+  }
+  return true;
+}
+
+uint16_t bip39_find_prefix(const char *prefix, uint16_t *first_match) {
+  int lo = 0, hi = BIP39_WORDLIST_SIZE - 1;
+  while (lo <= hi) {
+    int mid = lo + (hi - lo) / 2;
+    int cmp = strcmp(bip39_wordlist[mid], prefix);
+    if (cmp < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  uint16_t start = (uint16_t)lo;
+  if (start >= BIP39_WORDLIST_SIZE) {
+    if (first_match) *first_match = 0;
+    return 0;
+  }
+
+  uint16_t count = 0;
+  while (start + count < BIP39_WORDLIST_SIZE &&
+         str_starts_with(bip39_wordlist[start + count], prefix)) {
+    count++;
+  }
+
+  if (first_match) *first_match = start;
+  return count;
+}
+
 bool bip39_generate(char wordlist[BIP39_MNEMONIC_WORDS][BIP39_WORD_MAX_LEN]) {
   uint8_t entropy[BIP39_ENTROPY_LEN];
   uint8_t checksum_data[BIP39_CHECKSUM_LEN];

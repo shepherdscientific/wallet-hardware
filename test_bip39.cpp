@@ -190,6 +190,70 @@ int main(void) {
     else FAIL("BIP39_WORDLIST_SIZE is not 2048");
   }
 
+  TEST("bip39_find_prefix 'a' returns >0 matches at index 0");
+  {
+    uint16_t first = 0xFFFF;
+    uint16_t count = bip39_find_prefix("a", &first);
+    if (count > 0 && first == 0 && strcmp(bip39_wordlist[first], "abandon") == 0)
+      PASS();
+    else
+      FAIL("prefix 'a' should match multiple words starting at abandon");
+    printf(" (%u matches)", count);
+  }
+
+  TEST("bip39_find_prefix 'z' returns >0 matches");
+  {
+    uint16_t first = 0xFFFF;
+    uint16_t count = bip39_find_prefix("z", &first);
+    if (count > 0 && first < BIP39_WORDLIST_SIZE)
+      PASS();
+    else
+      FAIL("prefix 'z' should match some words");
+    printf(" (%u matches)", count);
+  }
+
+  TEST("bip39_find_prefix 'zzz' returns 0 matches");
+  {
+    uint16_t first = 0xFFFF;
+    uint16_t count = bip39_find_prefix("zzz", &first);
+    if (count == 0) PASS();
+    else FAIL("prefix 'zzz' should match no words");
+  }
+
+  TEST("bip39_find_prefix 'aba' matches 'abandon'");
+  {
+    uint16_t first = 0xFFFF;
+    uint16_t count = bip39_find_prefix("aba", &first);
+    if (count > 0 && strcmp(bip39_wordlist[first], "abandon") == 0)
+      PASS();
+    else
+      FAIL("prefix 'aba' should match 'abandon'");
+    printf(" (%u matches)", count);
+  }
+
+  TEST("bip39_find_prefix 'ab' returns all words starting with 'ab'");
+  {
+    uint16_t first1 = 0xFFFF, first2 = 0xFFFF;
+    uint16_t count1 = bip39_find_prefix("ab", &first1);
+    uint16_t count2 = bip39_find_prefix("abandon", &first2);
+    if (count1 > count2 && first1 == first2)
+      PASS();
+    else
+      FAIL("broader prefix should include narrower");
+    printf(" (%u vs %u)", count1, count2);
+  }
+
+  TEST("bip39_find_prefix exact word match returns 1 match");
+  {
+    uint16_t first = 0xFFFF;
+    uint16_t count = bip39_find_prefix("abandon", &first);
+    if (count == 1 && strcmp(bip39_wordlist[first], "abandon") == 0)
+      PASS();
+    else
+      FAIL("exact prefix should return 1 match");
+    printf(" (%u matches)", count);
+  }
+
   printf("\n=== Results: %d/%d passed, %d failed ===\n",
          tests_passed, tests_run, tests_failed);
   return tests_failed ? 1 : 0;
