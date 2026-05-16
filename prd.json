@@ -495,7 +495,7 @@
         "Document eFuse burning procedure in README for manufacturing; include key ceremony steps"
       ],
       "priority": 23,
-      "passes": false,
+      "passes": true,
       "notes": "Secure boot eFuse burning is irreversible. Test the full flow in a dev environment before burning production keys. Once eFuses are burned, unsigned firmware will permanently brick the device."
     },
     {

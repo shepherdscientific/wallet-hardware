@@ -23,6 +23,7 @@
 #include "base64.h"
 #include "account_manager.h"
 #include "settings.h"
+#include "version.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -2182,8 +2183,10 @@ void renderCurrentState() {
       display.println("ABOUT");
       display.println("---------------------");
       display.setCursor(0, 18);
-      display.print("Firmware: ");
-      display.println("1.0.0");
+      display.print("FW: ");
+      display.println(FIRMWARE_VERSION);
+      display.print("Hash: ");
+      display.println(BUILD_HASH);
       display.print("SE: ");
       {
         char serial[32];

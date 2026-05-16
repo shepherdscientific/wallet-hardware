@@ -183,3 +183,111 @@ ls -l .pio/build/production/firmware.bin
 | Binary size | ~1.5 MB (with WiFi stack) | Should be < 1.2 MB |
 
 The production firmware has **no wireless capability at all** — the WiFi stack is excluded at compile time and the radio is explicitly powered off at boot. This ensures the device is truly air-gapped in production.
+
+---
+
+## Secure Boot v2 & Flash Encryption (Production)
+
+### Overview
+
+ESP32-S3 secure boot v2 ensures only signed firmware executes on the device. Combined with flash encryption, it protects against:
+- Physical flash chip extraction and analysis
+- Unauthorized firmware replacement
+- Rollback attacks (via anti-rollback eFuse)
+
+**Both features are PERMANENT once eFuses are burned. Test thoroughly before burning.**
+
+### Key Ceremony
+
+The signing key must be generated in a secure offline environment and never exposed to networked systems:
+
+```bash
+# 1. Generate secure boot signing key (offline, air-gapped machine)
+#    ESP32-S3 secure boot v2 uses ECDSA P-256 with SHA-256
+openssl ecparam -name prime256v1 -genkey -noout -out secure_boot_signing_key.pem
+
+# 2. Extract public key for eFuse burning
+openssl ec -in secure_boot_signing_key.pem -pubout -out secure_boot_signing_key.pub
+
+# 3. Generate flash encryption key (256-bit AES)
+#    ESP32-S3 uses XTS-AES-256 for flash encryption
+openssl rand -out flash_encryption_key.bin 32
+
+# 4. Store keys securely (HSM, air-gapped encrypted storage)
+#    NEVER commit keys to the repository or share them over the network
+```
+
+### Build Configuration
+
+```bash
+# Generate production sdkconfig with secure boot + flash encryption
+./scripts/gen_sdkconfig.sh production
+
+# Edit the generated sdkconfig.production:
+#   - Set CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+#   - Verify CONFIG_SECURE_BOOT_V2_ENABLED=y
+#   - Verify CONFIG_FLASH_ENCRYPTION_ENABLED=y
+
+# Build with secure boot enabled
+pio run -e production
+```
+
+The `sdkconfig.defaults.production` file contains the minimal security overrides. The `scripts/gen_sdkconfig.sh` script merges these with the auto-generated PlatformIO sdkconfig.
+
+### eFuse Burning (Manufacturing)
+
+**WARNING: eFuse burning is IRREVERSIBLE. Once burned, unsigned firmware will NOT boot.**
+
+Test the firmware WITHOUT burning eFuses first (the ESP32-S3 ROM bootloader checks eFuses — if they're not burned, any firmware boots):
+
+```bash
+# Flash and test WITHOUT eFuses
+pio run -e production -t upload
+pio device monitor -b 115200
+# Verify: boot splash, PIN entry, About screen shows correct version and SE serial
+# Verify: signing a transaction works correctly
+
+# Only after successful testing, burn eFuses:
+pip install esptool
+
+# Burn secure boot key digest (BLOCK_KEY0 for ESP32-S3)
+espefuse.py --port /dev/cu.usbmodem* burn_key BLOCK_KEY0 secure_boot_signing_key.pem SECURE_BOOT
+
+# Enable secure boot
+espefuse.py --port /dev/cu.usbmodem* burn_efuse SECURE_BOOT_EN 1
+
+# Burn flash encryption key (BLOCK_KEY1)
+espefuse.py --port /dev/cu.usbmodem* burn_key BLOCK_KEY1 flash_encryption_key.bin FLASH_CRYPT
+
+# Enable flash encryption (release mode)
+espefuse.py --port /dev/cu.usbmodem* burn_efuse FLASH_CRYPT_CNT 127
+
+# Verify eFuse summary
+espefuse.py --port /dev/cu.usbmodem* summary
+```
+
+After eFuse burning, the device will:
+1. Reject any unsigned firmware at boot (ESP32-S3 ROM verifier)
+2. Run flash encryption on first boot (encrypts all partitions transparently)
+3. Store NVS and firmware encrypted at rest
+
+### Firmware Version Attestation
+
+The device's About screen (Settings → About) displays:
+- **FW**: firmware version (`FIRMWARE_VERSION` in `version.h`)
+- **Hash**: first 16 hex chars of SHA-256 of the firmware binary (injected post-build by `scripts/post_build.py`)
+- **SE**: SE051C2 serial number (read from the secure element via `se051_get_serial()`)
+
+Users can verify the firmware hash against the published build artifacts to confirm they are running authentic software.
+
+The build hash is automatically injected into the firmware binary by the PlatformIO post-build script (`scripts/post_build.py`). The placeholder string `buildhash_plchld` in `version.h` is replaced with the first 16 characters of the SHA-256 hash of the final firmware binary.
+
+### Disabling Secure Boot (Development)
+
+For development boards, do NOT burn eFuses. Use the dev environment:
+
+```bash
+pio run -e dev -t upload
+```
+
+Dev builds have no secure boot and no flash encryption — allowing rapid iteration and debugging via USB.

@@ -1,0 +1,10 @@
+# ESP32-S3 Development Build Configuration
+# No secure boot, no flash encryption — for rapid iteration.
+#
+# Secure boot is NOT enabled here. Do not burn eFuses on dev boards.
+# Flash encryption is NOT enabled. NVS is stored in plaintext for debugging.
+
+CONFIG_SECURE_BOOT=n
+CONFIG_FLASH_ENCRYPTION_ENABLED=n
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL=3

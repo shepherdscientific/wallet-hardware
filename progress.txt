@@ -455,3 +455,26 @@ Patterns discovered:
 Patterns discovered:
 - WiFi guard pattern: #ifdef DEV_BUILD for WiFi includes/code, #else with esp_wifi_stop/deinit for production-safe default
 - PlatformIO dual-env pattern: shared [platformio] section with default_envs, per-env build_flags with -DDEV_BUILD vs -DPRODUCTION_BUILD
+
+--- US-023: Firmware Secure Boot and Version Attestation ---
+- Created `version.h`: centralized firmware version constant (`FIRMWARE_VERSION = "1.0.0"`) and build hash placeholder (`BUILD_HASH = "buildhash_plchld"`)
+- Updated `wallet1.ino`: About screen now uses `FIRMWARE_VERSION` constant and displays `BUILD_HASH` (build hash line: "Hash: buildhash_plchld" → post-build patched to real SHA256)
+- Created `sdkconfig.defaults.production`: secure boot v2 + flash encryption Kconfig overrides
+  - CONFIG_SECURE_BOOT=y, CONFIG_SECURE_BOOT_V2_ENABLED=y, CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+  - CONFIG_FLASH_ENCRYPTION_ENABLED=y, CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+  - CONFIG_SECURE_UART_ROM_DL_MODE_ENABLED=y, panic output suppressed
+- Created `sdkconfig.defaults.dev`: development config with secure boot + flash encryption DISABLED
+- Created `scripts/gen_sdkconfig.sh`: generates production sdkconfig by merging PlatformIO auto-generated base with security overrides; includes warnings about irreversible eFuse burning
+- Created `scripts/post_build.py`: PlatformIO extra_script that runs after firmware.bin is built — computes SHA-256 of binary, finds the 16-byte "buildhash_plchld" placeholder, replaces with first 16 hex chars of hash
+- Created `scripts/patch_build_hash.py`: standalone version of post_build.py for manual firmware patching outside PlatformIO
+- Updated `platformio.ini`: added `[common]` section with `extra_scripts = scripts/post_build.py`, both environments now run the post-build hash injection
+- Updated `README.md`: comprehensive secure boot v2 + flash encryption documentation:
+  - Key Ceremony: offline key generation using openssl (ECDSA P-256 for secure boot, AES-256 for flash encryption)
+  - Build Configuration: gen_sdkconfig.sh usage, sdkconfig defaults merge process
+  - eFuse Burning (Manufacturing): step-by-step espefuse.py commands with irreversible warnings
+    - BLOCK_KEY0 for secure boot key digest, SECURE_BOOT_EN eFuse
+    - BLOCK_KEY1 for flash encryption key, FLASH_CRYPT_CNT eFuse
+    - Summary verification after burning
+  - Firmware Version Attestation: FW version, build hash, SE serial shown in About screen; hash injected automatically post-build
+  - Development: no eFuse burning, rapid iteration with dev environment
+- All 30 existing tests pass (10 settings + 12 account_manager + 8 coin_control)
