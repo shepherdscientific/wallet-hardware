@@ -17,11 +17,12 @@ typedef enum {
   ADDRESS_P2TR
 } address_type_t;
 
-bool address_generate(address_type_t type, uint32_t index,
-                      char addr_out[MAX_ADDRESS_LEN]);
+bool address_generate(address_type_t type, uint32_t account,
+                      uint32_t index, char addr_out[MAX_ADDRESS_LEN]);
 
-bool address_generate_with_path(address_type_t type, uint32_t change,
-                                uint32_t index, char addr_out[MAX_ADDRESS_LEN]);
+bool address_generate_with_path(address_type_t type, uint32_t account,
+                                uint32_t change, uint32_t index,
+                                char addr_out[MAX_ADDRESS_LEN]);
 
 const char *address_type_name(address_type_t type);
 

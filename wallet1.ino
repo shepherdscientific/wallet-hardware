@@ -9,12 +9,14 @@
 #include "wallet_storage.h"
 #include "bip39.h"
 #include "address.h"
+#include "bip32.h"
 #include "qr_renderer.h"
 #include "psbt.h"
 #include "psbt_signer.h"
 #include "bech32.h"
 #include "serial_transport.h"
 #include "base64.h"
+#include "account_manager.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -60,19 +62,22 @@ enum WalletState {
   VERIFY_ADDRESS,
   VERIFY_MATCH,
   VERIFY_MISMATCH,
-  DEVICE_ID_DISPLAY
+  DEVICE_ID_DISPLAY,
+  ACCOUNT_SELECT,
+  ACCOUNT_RENAME
 };
 WalletState currentState = PIN_SETUP;
 
 int menuIndex = 0;
-const int TOTAL_MENU_ITEMS = 6;
+const int TOTAL_MENU_ITEMS = 7;
 const char* menuItems[] = {
   "1. View Balance",
   "2. Receive (Addr)",
   "3. Sign Transaction",
   "4. PQC Quantum Sec",
   "5. Demo Sign (PSBT)",
-  "6. Verify Address"
+  "6. Verify Address",
+  "7. Account"
 };
 
 // --- PIN STATE ---
@@ -121,6 +126,21 @@ bool passphraseIsNewWallet;
 char currentAddressStr[MAX_ADDRESS_LEN] = "";
 uint8_t addressTypeIdx = 1;
 uint32_t addressIndex = 0;
+
+// --- ACCOUNT STATE ---
+uint32_t activeAccount = 0;
+
+// --- ACCOUNT RENAME STATE ---
+static const char ACCT_NAME_CHARS[] =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  "abcdefghijklmnopqrstuvwxyz"
+  "0123456789"
+  "-_.";
+#define ACCT_NAME_CHAR_COUNT (sizeof(ACCT_NAME_CHARS) - 1)
+char acctNameBuf[7];
+uint8_t acctNamePos;
+uint16_t acctNameCharIdx;
+bool acctNameDone;
 
 // --- QR STATE ---
 uint8_t qrBuffer[QR_MAX_BUFFER_SIZE];
@@ -245,6 +265,7 @@ uint32_t tx_estimate_vsize(const psbt_t *psbt) {
 void build_output_address(const psbt_output_t *output, char *out, size_t out_len) {
   if (output->bip32_derivation.present && output->bip32_derivation.path_len >= 5) {
     uint32_t purpose = output->bip32_derivation.path[0];
+    uint32_t account = output->bip32_derivation.path[2] & ~HD_HARDENED;
     uint32_t change = output->bip32_derivation.path[3];
     uint32_t addr_idx = output->bip32_derivation.path[4];
     address_type_t atype;
@@ -252,7 +273,7 @@ void build_output_address(const psbt_output_t *output, char *out, size_t out_len
     else if (purpose == 0x8000002C) atype = ADDRESS_P2PKH;
     else if (purpose == 0x80000056) atype = ADDRESS_P2TR;
     else { atype = ADDRESS_P2WPKH; }
-    address_generate_with_path(atype, change, addr_idx, out);
+    address_generate_with_path(atype, account, change, addr_idx, out);
     return;
   }
   if (output->script_pubkey_len == 22 &&
@@ -350,6 +371,8 @@ void setup() {
   }
 
   se051_init();
+
+  account_init();
 
   if (pin_is_set()) {
     currentState = PIN_ENTRY;
@@ -748,7 +771,8 @@ void handleNavigation() {
         if (menuIndex == 0) currentState = SHOW_BALANCE;
         if (menuIndex == 1) {
           addressTypeIdx = 1;
-          addressIndex = 0;
+          uint32_t acct = account_get_active();
+          account_get_address_index(acct, &addressIndex);
           updateAddressDisplay();
           currentState = SHOW_ADDRESS;
         }
@@ -767,6 +791,10 @@ void handleNavigation() {
           updateAddressDisplay();
           currentState = VERIFY_ADDRESS;
         }
+        if (menuIndex == 6) {
+          activeAccount = account_get_active();
+          currentState = ACCOUNT_SELECT;
+        }
       }
       break;
 
@@ -784,6 +812,8 @@ void handleNavigation() {
       if (cancelPressed) {
         currentState = SHOW_ADDRESS;
       } else if (confirmPressed) {
+        uint32_t acct = account_get_active();
+        account_increment_address_index(acct);
         currentState = MAIN_MENU;
       }
       break;
@@ -886,6 +916,50 @@ void handleNavigation() {
     case DEVICE_ID_DISPLAY:
       if (confirmPressed || cancelPressed) {
         currentState = MAIN_MENU;
+      }
+      break;
+
+    case ACCOUNT_SELECT:
+      if (cancelPressed) {
+        activeAccount = (activeAccount + 1) % (MAX_ACCOUNTS + 1);
+      } else if (confirmPressed) {
+        if (activeAccount == MAX_ACCOUNTS) {
+          acctNamePos = 0;
+          acctNameCharIdx = 0;
+          acctNameDone = false;
+          memset(acctNameBuf, 0, sizeof(acctNameBuf));
+          uint32_t cur = account_get_active();
+          char existing[7];
+          if (account_get_name(cur, existing, sizeof(existing))) {
+            strncpy(acctNameBuf, existing, sizeof(acctNameBuf) - 1);
+            acctNamePos = (uint8_t)strlen(acctNameBuf);
+          }
+          currentState = ACCOUNT_RENAME;
+        } else {
+          account_set_active(activeAccount);
+          currentState = MAIN_MENU;
+        }
+      }
+      break;
+
+    case ACCOUNT_RENAME:
+      if (cancelPressed) {
+        acctNameCharIdx = (acctNameCharIdx + 1) % (ACCT_NAME_CHAR_COUNT + 1);
+      } else if (confirmPressed) {
+        if (acctNameCharIdx >= ACCT_NAME_CHAR_COUNT) {
+          acctNameDone = true;
+          if (acctNamePos > 0) {
+            acctNameBuf[acctNamePos] = '\0';
+          }
+          uint32_t cur = account_get_active();
+          account_set_name(cur, acctNameBuf);
+          activeAccount = cur;
+          currentState = ACCOUNT_SELECT;
+        } else if (acctNamePos < 6) {
+          acctNameBuf[acctNamePos] = ACCT_NAME_CHARS[acctNameCharIdx];
+          acctNamePos++;
+          acctNameBuf[acctNamePos] = '\0';
+        }
       }
       break;
   }
@@ -1171,8 +1245,19 @@ void renderCurrentState() {
 
     case MAIN_MENU:
       display.setCursor(0, 0);
-      display.println("COINCUBE BITCOIN  [v0.1]");
-      display.println("---------------------");
+      {
+        char name_buf[ACCOUNT_NAME_LEN];
+        uint32_t acct = account_get_active();
+        if (account_get_name(acct, name_buf, sizeof(name_buf))) {
+          display.print("COINCUBE [");
+          display.print(name_buf);
+          display.println("]");
+        } else {
+          display.print("COINCUBE [Acct ");
+          display.print(acct);
+          display.println("]");
+        }
+      }
       for (int i = 0; i < TOTAL_MENU_ITEMS; i++) {
         if (i == menuIndex) {
           display.print("> ");
@@ -1201,7 +1286,19 @@ void renderCurrentState() {
 
     case SHOW_ADDRESS:
       display.setCursor(0, 0);
-      display.println("BTC RECEIVE ADDRESS");
+      {
+        uint32_t acct = account_get_active();
+        char name_buf[ACCOUNT_NAME_LEN];
+        if (account_get_name(acct, name_buf, sizeof(name_buf))) {
+          display.print("BTC RECEIVE [");
+          display.print(name_buf);
+          display.println("]");
+        } else {
+          display.print("BTC RECEIVE [Acct ");
+          display.print(acct);
+          display.println("]");
+        }
+      }
       display.println("---------------------");
       display.setTextSize(1);
       display.setCursor(0, 18);
@@ -1438,7 +1535,19 @@ void renderCurrentState() {
 
     case VERIFY_ADDRESS:
       display.setCursor(0, 0);
-      display.println("VERIFY ADDRESS");
+      {
+        uint32_t acct = account_get_active();
+        char name_buf[ACCOUNT_NAME_LEN];
+        if (account_get_name(acct, name_buf, sizeof(name_buf))) {
+          display.print("VERIFY [");
+          display.print(name_buf);
+          display.println("]");
+        } else {
+          display.print("VERIFY [Acct ");
+          display.print(acct);
+          display.println("]");
+        }
+      }
       display.println("---------------------");
       display.setTextSize(1);
       display.setCursor(0, 18);
@@ -1505,6 +1614,89 @@ void renderCurrentState() {
       display.println("Match companion app");
       display.setCursor(0, 56);
       display.print("Any button to continue");
+      break;
+
+    case ACCOUNT_SELECT:
+      display.setCursor(0, 0);
+      display.println("SELECT ACCOUNT");
+      display.println("---------------------");
+      {
+        int totalItems = (int)MAX_ACCOUNTS + 1;
+        int visibleCount = (totalItems < 5) ? totalItems : 5;
+        int halfWin = visibleCount / 2;
+        int firstIdx = (int)activeAccount - halfWin;
+        if (firstIdx < 0) firstIdx = 0;
+        int lastIdx = firstIdx + visibleCount;
+        if (lastIdx > totalItems) {
+          lastIdx = totalItems;
+          firstIdx = lastIdx - visibleCount;
+          if (firstIdx < 0) firstIdx = 0;
+        }
+        for (int i = firstIdx; i < lastIdx; i++) {
+          int row = 20 + (i - firstIdx) * 8;
+          display.setCursor(0, row);
+          bool isSelected = ((uint32_t)i == activeAccount);
+          if (isSelected) {
+            display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          }
+          if (i < (int)MAX_ACCOUNTS) {
+            display.print("Acct ");
+            display.print(i);
+            char name_buf[ACCOUNT_NAME_LEN];
+            if (account_get_name((uint32_t)i, name_buf, sizeof(name_buf))) {
+              display.print(" ");
+              display.print(name_buf);
+            }
+            if (isSelected) {
+              int labelLen = 7 + (name_buf[0] ? (int)strlen(name_buf) + 1 : 0);
+              int pad = 21 - labelLen;
+              while (pad-- > 0) display.print(" ");
+              display.setTextColor(SSD1306_WHITE);
+            }
+          } else {
+            display.print("  Rename Acct");
+            if (isSelected) {
+              while (display.getCursorX() < 21 * 6) display.print(" ");
+              display.setTextColor(SSD1306_WHITE);
+            }
+          }
+        }
+      }
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=select");
+      break;
+
+    case ACCOUNT_RENAME:
+      display.setCursor(0, 0);
+      {
+        uint32_t cur = account_get_active();
+        display.print("RENAME ACCT ");
+        display.println(cur);
+      }
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      if (acctNamePos > 0) {
+        display.print(acctNameBuf);
+      }
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      bool atDone = (acctNameCharIdx >= ACCT_NAME_CHAR_COUNT);
+      if (acctNamePos < 6) {
+        if (atDone) {
+          display.print("[DONE]");
+        } else {
+          display.print(ACCT_NAME_CHARS[acctNameCharIdx]);
+        }
+      } else {
+        display.print("[DONE]");
+      }
+      display.setTextColor(SSD1306_WHITE);
+      for (int i = acctNamePos + 1; i < 6; i++) display.print("_");
+      display.setCursor(0, 40);
+      display.print("Pos: ");
+      display.print(acctNamePos);
+      display.print("/6");
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=select");
       break;
   }
   display.display();
@@ -1651,7 +1843,8 @@ void startRestoreProcess() {
 
 void updateAddressDisplay() {
   address_type_t type = (address_type_t)addressTypeIdx;
-  if (!address_generate(type, addressIndex, currentAddressStr)) {
+  uint32_t acct = account_get_active();
+  if (!address_generate(type, acct, addressIndex, currentAddressStr)) {
     strncpy(currentAddressStr, "Address gen error", MAX_ADDRESS_LEN);
   }
 }
