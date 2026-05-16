@@ -176,6 +176,22 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 - Every state in the `handleNavigation` switch must update `lastActivityMs = millis();` to reset the inactivity timer.
 - Agents: `firmware-engineer`.
 
+### PRD Story Completion Verification Pattern
+- After marking a story as `passes: true` in prd.json, run the relevant test suite(s) to confirm the implementation actually works.
+- If tests fail, immediately revert the `passes` flag to `false` and document the failure in `AGENTS.md` before proceeding.
+- Use `jq` to update prd.json (never manual edit) as described in Section 4.
+- This prevents false-positive story completions that would break the CI pipeline.
+- Agents: `all`.
+
+### No-Op Detection (Zero Uncommitted Changes)
+- Before starting any implementation, run `git diff --stat` to check for uncommitted changes.
+- If there are zero uncommitted changes AND the current PRD story is already marked `passes: true`, the agent should:
+  1. Verify the story is truly complete by running tests (`pytest` for Python, `g++ -DUSE_SE_STUB` for C++).
+  2. If tests pass, move to the next highest-priority incomplete story.
+  3. If tests fail, mark the story as incomplete and document the failure in `AGENTS.md`.
+- This prevents the agent from re-implementing already-complete work or entering an infinite loop when there's nothing to do.
+- Agents: `all`.
+
 ### Settings Sub-Menu Navigation Pattern
 - CANCEL cycles through option indices (e.g., `settingsSubIdx = (settingsSubIdx + 1) % COUNT`), CONFIRM saves value via `settings_set_*()` and returns to parent menu state.
 - Show current saved value alongside the tentative selection for clarity.

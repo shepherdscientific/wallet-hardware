@@ -1,9 +1,14 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#ifdef DEV_BUILD
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include "secrets.h"
+#endif
+#if !defined(DEV_BUILD) && defined(ESP32)
+#include <esp_wifi.h>
+#endif
 #include "se051_hal.h"
 #include "pin_manager.h"
 #include "wallet_storage.h"
@@ -29,9 +34,10 @@
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// --- NETWORK CREDENTIALS ---
+#ifdef DEV_BUILD
 const char* ssid = SECRET_SSID;
 const char* password = SECRET_PASS;
+#endif
 
 // --- WALLET STATE MACHINE ---
 enum WalletState {
@@ -405,7 +411,7 @@ void setup() {
 
   showBootSplash();
 
-  // --- NON-BLOCKING WIFI WITH TIMEOUT ---
+#ifdef DEV_BUILD
   WiFi.begin(ssid, password);
   int timeout = 0;
   while (WiFi.status() != WL_CONNECTED && timeout < 8) {
@@ -419,6 +425,10 @@ void setup() {
     ArduinoOTA.begin();
     Serial.println("OTA Active");
   }
+#else
+  esp_wifi_stop();
+  esp_wifi_deinit();
+#endif
 
   se051_init();
 
@@ -447,9 +457,11 @@ void setup() {
 }
 
 void loop() {
+#ifdef DEV_BUILD
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.handle();
   }
+#endif
 
   if (currentState == WAIT_PSBT) {
     serial_msg_t msg = serial_poll();

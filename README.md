@@ -134,12 +134,52 @@ A decoupling capacitor of **100 nF** close to the SE051C2 VCC pin is strongly re
 
 ## Build Targets
 
-```bash
-# Development (WiFi OTA enabled, mock data allowed)
-idf.py build -DDEV_BUILD=1
+The project uses PlatformIO (`platformio.ini`) with two environments:
 
-# Production (WiFi disabled, OTA disabled, no mock data)
-idf.py build -DPRODUCTION_BUILD=1
+```bash
+# Install PlatformIO (if not already installed)
+pip install platformio
+
+# Development build (WiFi OTA enabled, mock data allowed)
+pio run -e dev
+
+# Production build (WiFi disabled, OTA disabled, no mock data)
+pio run -e production
+
+# Build both environments (CI)
+pio run
 ```
 
-See `prd.json` for the full feature specification and implementation order.
+### Flashing
+
+```bash
+# Flash development firmware via USB
+pio run -e dev -t upload
+
+# Flash production firmware via USB
+pio run -e production -t upload
+
+# Monitor serial output
+pio device monitor -b 115200
+```
+
+### Production Verification
+
+```bash
+# Production binary must be < 1.2 MB (WiFi stack excluded)
+pio run -e production
+ls -l .pio/build/production/firmware.bin
+# macOS: stat -f%z .pio/build/production/firmware.bin
+# Linux: stat -c%s .pio/build/production/firmware.bin
+```
+
+### WiFi / OTA: Dev vs Production
+
+| Aspect | Dev Build (`DEV_BUILD`) | Production Build (`PRODUCTION_BUILD`) |
+|--------|--------------------------|---------------------------------------|
+| WiFi stack | Linked and enabled | Radio powered off at boot (`esp_wifi_stop` / `esp_wifi_deinit`) |
+| OTA updates | Over WiFi (ArduinoOTA) | Over USB only (DFU / UART bootloader) |
+| `secrets.h` | Required (contains SSID/password) | Not included; no dependency |
+| Binary size | ~1.5 MB (with WiFi stack) | Should be < 1.2 MB |
+
+The production firmware has **no wireless capability at all** — the WiFi stack is excluded at compile time and the radio is explicitly powered off at boot. This ensures the device is truly air-gapped in production.
