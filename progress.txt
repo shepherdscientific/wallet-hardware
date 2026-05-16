@@ -1,5 +1,23 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-017 — PIN Lockout, Wipe, and Monotonic Attempt Counter
+- Added `se051_monotonic_counter_get()` / `se051_monotonic_counter_increment()` / `se051_monotonic_counter_reset()` to SE HAL (header, stub, ESP32)
+- PIN attempt counter (SE object 0x05) now uses monotonic counter API with hardware-enforced increment-only semantics
+- **Increment-before-verify pattern**: counter incremented BEFORE pin_verify() — prevents bypass even on comm errors
+- Counter reset to 0 only after successful PIN verification via `pin_reset_attempts()`
+- New helpers: `pin_attempts_remaining()` returns remaining attempts (5 - current), `pin_is_near_lockout()` returns true at >= 3 attempts
+- Updated wallet1.ino: increment before verify, show "WARNING: N attempts remaining" at attempts 3-4
+- WALLET_WIPED state: auto-reboots after 4 seconds, any button triggers immediate reboot
+- Factory reset sequence: `wallet_factory_reset()` deletes SE objects 0x01-0x07, OLED shows "WALLET WIPED - Restore from seed"
+- 6 new monotonic counter tests: increment-only check, remaining attempts calculation, near-lockout threshold detection
+- All 231 tests pass across 14 test suites (27 pin_manager, 25 address, 17 bip32, 20 bip39, 22 wallet_storage, 11 anti_phish, 20 psbt, 8 psbt_serialize, 12 psbt_signer, 17 se051_stub, 20 qr_renderer, 8 serial_transport, 14 tx_review, 10 base64)
+
+Patterns discovered:
+- Monotonic counter HAL pattern: separate API (get/increment/reset) vs plain read/write; stub maintains counter in g_key_store but only allows upward movement via increment API
+- Increment-before-verify pattern: increment failure counter before running verification, reset only on success — eliminates TOCTOU between verify and counter update
+- Warning threshold pattern: `pin_is_near_lockout()` guard at attempt 3+ with inverted OLED text for visual urgency
+- Auto-reboot pattern: use `millis()` timer in loop() for WALLET_WIPED → ESP.restart() with manual override on any button press
+
 ### 2026-05-16: US-016 — Anti-Phishing Device Pairing Code
 - Implementation was already complete from prior iteration; added threat model documentation
 - `wallet_generate_anti_phish()`: 4-word BIP39 identity from SE TRNG, stored in SE object 0x04

@@ -366,8 +366,8 @@
         "Wipe is irreversible from software; only mnemonic restore can recover funds"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": "The monotonic counter is the key security property here. Without it, an attacker can simply reflash NVS to reset the counter. SE051C2 supports monotonic counters natively."
+      "passes": true,
+      "notes": "Implementation complete. Monotonic counter HAL added to SE interface (get/increment/reset). pin_manager uses SE monotonic counter (object 0x05) with increment-before-verify pattern. Warning display at >=3 attempts on OLED. WALLET_WIPED auto-reboots after 4s. All 231 tests pass."
     },
     {
       "id": "US-018",
