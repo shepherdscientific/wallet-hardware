@@ -1,5 +1,34 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-020 — Settings Menu (Display Timeout, Auto-Lock, Brightness, Change PIN, About)
+- Created `settings.h/cpp`: NVS-persisted settings module with ESP32 Preferences + host stub backends
+  - Display timeout: 30s/1m/2m/5m/Never, Auto-lock: 1m/5m/15m/30m/Never, Contrast: 0-255 step 32
+  - Utility functions: `settings_disp_timeout_ms()`, `settings_auto_lock_ms()`, label formatters
+- Added `SE051_GET_SERIAL` to HAL: `se051_get_serial()` in se051_hal.h, stub returns "SE051-00000001", ESP impl reads via APDU
+- wallet1.ino changes:
+  - Added 7 new WalletState entries: SETTINGS_MENU, SETTINGS_TIMEOUT, SETTINGS_AUTOLOCK, SETTINGS_CONTRAST, SETTINGS_CHANGE_PIN_OLD/NEW/CONFIRM, SETTINGS_PIN_MISMATCH, SETTINGS_ABOUT
+  - "8. Settings" added as 8th main menu item (TOTAL_MENU_ITEMS=8)
+  - Universal display wake: any button press when !displayOn wakes display (at top of handleNavigation)
+  - renderCurrentState: blank display when !displayOn, removed redundant per-state displayOn checks
+  - Display auto-dim: applies to MAIN_MENU, settings submenus, mnemonic ceremony, balance, address, PQC screens
+  - Auto-lock: after inactivity, returns to PIN_ENTRY state (clears PIN digits, resets position)
+  - Settings sub-menu: scrollable list (5 items), CANCEL cycles, CONFIRM enters sub-state
+  - Timeout/Autolock selectors: CANCEL cycles options, CONFIRM saves + returns to menu; shows current saved value
+  - Contrast adjustment: CANCEL decreases by 32 (wraps from 0 to 255), CONFIRM increases (wraps back); live SSD1306_SETCONTRAST; 5-second inactivity timeout saves and returns
+  - Change PIN: 3-phase flow (old PIN verify → new PIN enter → confirm; memcmp comparison; pin_change() via pin_manager)
+  - PIN mismatch: SETTINGS_PIN_MISMATCH state shows error, any button returns to settings menu
+  - About screen: firmware version, SE serial (se051_get_serial), address type, active account
+- `test_settings.cpp`: 10 unit tests (defaults, get/set, labels, ms conversion, bounds clamp, contrast range, persistence roundtrip)
+- All 10 settings tests + 12 account_manager tests + 8 coin_control tests = 30 tests pass
+
+Patterns discovered:
+- Settings module pattern: same dual-backend (Preferences + stub) as account_manager, using `#if defined(ARDUINO) && defined(ESP32)`
+- Universal display wake pattern: single `if (!displayOn)` check at top of handleNavigation, early `return` to prevent action on wake press
+- Settings sub-state navigation: CONFIRM enters sub-state, CANCEL cycles options; selected value saved via settings_set_*() on CONFIRM
+- Contrast live preview: direct `display.ssd1306_command(SSD1306_SETCONTRAST)` + value command; bar graph visualization via `map()` + `fillRect()`; auto-save on 5s timeout
+- PIN change flow: reuses existing pin_verify() and pin_change(); 3-phase state machine (old → new → confirm) with memcmp comparison; zero sensitive buffers after flow
+- Settings ENUM pattern: typedef'd enums with _COUNT sentinel for modulo bounds checking
+
 ### 2026-05-16: US-019 — UTXO Coin Control (Input Selection for Signing)
 - Added `COIN_CONTROL` state to WalletState enum and state machine (wallet1.ino)
 - Global state: `txInputSelected[PSBT_MAX_INPUTS]`, `coinControlScrollIdx`, `coinControlOwnedCount`

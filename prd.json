@@ -431,8 +431,8 @@
         "About screen shows: firmware version, build date, SE051C2 serial number (from se051_selftest()), BTC address type, active account"
       ],
       "priority": 20,
-      "passes": false,
-      "notes": "Use esp_timer or FreeRTOS timers for auto-lock/display timeout. Activity resets both timers. Long-press CANCEL from main menu can be a shortcut to manual lock."
+      "passes": true,
+      "notes": "Implementation complete. settings.h/cpp with NVS persistence (Preferences on ESP32, in-memory stub for host CI). Added universal display auto-dim and auto-lock to main loop. SETTINGS_MENU state with 5 sub-states: timeout selector, autolock selector, contrast adjustment (live preview via SSD1306_SETCONTRAST, 5s timeout-return), Change PIN (old/new/confirm with mismatch handling), About (fw version, SE serial via se051_get_serial, address type, active account). PIN change uses existing pin_change() from pin_manager. 10 unit tests pass."
     },
     {
       "id": "US-021",
