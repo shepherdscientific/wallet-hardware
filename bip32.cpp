@@ -694,6 +694,30 @@ bool hd_pubkey_from_priv(const uint8_t privkey[BIP32_KEY_LEN],
   return true;
 }
 
+bool hd_ec_pubkey_tweak(const uint8_t pubkey[BIP32_PUBKEY_LEN],
+                        const uint8_t tweak[32],
+                        uint8_t xonly_out[32]) {
+  if (!pubkey || !tweak || !xonly_out) return false;
+  if (pubkey[0] != 0x02 && pubkey[0] != 0x03) return false;
+
+  ec_pt P;
+  if (!pubkey_to_ec(pubkey, &P)) return false;
+
+  uint64_t t[4];
+  u256_from_be(t, tweak);
+
+  ec_pt T;
+  ec_scalar_mult_G(&T, t);
+
+  ec_pt Q;
+  ec_add(&Q, &P, &T);
+
+  if (Q.inf) return false;
+
+  u256_to_be(Q.x, xonly_out);
+  return true;
+}
+
 bool hd_test_mod_mul(const uint8_t a[32], const uint8_t b[32],
                      uint8_t result[32]) {
   if (!a || !b || !result) return false;

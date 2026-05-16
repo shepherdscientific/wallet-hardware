@@ -54,6 +54,10 @@ bool hd_pubkey_from_priv(const uint8_t privkey[BIP32_KEY_LEN],
                          uint8_t pubkey_out[BIP32_PUBKEY_LEN]);
 
 // Test helper: multiply two 256-bit values mod secp256k1 field prime
+bool hd_ec_pubkey_tweak(const uint8_t pubkey[BIP32_PUBKEY_LEN],
+                        const uint8_t tweak[32],
+                        uint8_t xonly_out[32]);
+
 bool hd_test_mod_mul(const uint8_t a[32], const uint8_t b[32],
                      uint8_t result[32]);
 

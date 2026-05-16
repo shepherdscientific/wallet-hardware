@@ -8,6 +8,7 @@
 #include "pin_manager.h"
 #include "wallet_storage.h"
 #include "bip39.h"
+#include "address.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -82,9 +83,10 @@ unsigned long restoreStartTime = 0;
 char restoreError[32] = "";
 bool restorePassphrase = false;
 
-// --- REAL BITCOIN DATA (MOCK MINTED) ---
-const char* BTC_ADDRESS = "bc1p5d7txrekgvk0llknw8vkm6680zhv93";
-uint64_t walletSats = 42050000;
+// --- ADDRESS STATE ---
+char currentAddressStr[MAX_ADDRESS_LEN] = "";
+uint8_t addressTypeIdx = 1;
+uint32_t addressIndex = 0;
 
 // --- DEVICE UID (ESP32) ---
 void pin_get_device_uid(uint8_t uid[8]) {
@@ -375,14 +377,27 @@ void handleNavigation() {
         menuIndex = (menuIndex + 1) % TOTAL_MENU_ITEMS;
       } else if (confirmPressed) {
         if (menuIndex == 0) currentState = SHOW_BALANCE;
-        if (menuIndex == 1) currentState = SHOW_ADDRESS;
+        if (menuIndex == 1) {
+          addressTypeIdx = 1;
+          addressIndex = 0;
+          updateAddressDisplay();
+          currentState = SHOW_ADDRESS;
+        }
         if (menuIndex == 2) currentState = SIGN_TX;
         if (menuIndex == 3) currentState = PQC_STATUS;
       }
       break;
 
-    case SHOW_BALANCE:
     case SHOW_ADDRESS:
+      if (cancelPressed) {
+        addressTypeIdx = (addressTypeIdx + 1) % 3;
+        updateAddressDisplay();
+      } else if (confirmPressed) {
+        currentState = MAIN_MENU;
+      }
+      break;
+
+    case SHOW_BALANCE:
     case PQC_STATUS:
     case TX_SUCCESS:
       if (cancelPressed || confirmPressed) {
@@ -659,14 +674,16 @@ void renderCurrentState() {
       display.println("BTC RECEIVE ADDRESS");
       display.println("---------------------");
       display.setTextSize(1);
-      display.setCursor(0, 20);
-      display.println("bc1p5d7txrekgvk0l");
-      display.println("lknw8vkm6680zhv93");
-      display.setCursor(0, 45);
-      display.println("Verify layout on host!");
+      display.setCursor(0, 18);
+      display.println(currentAddressStr);
+      display.setCursor(0, 38);
+      display.print("Type: ");
+      display.println(address_type_name((address_type_t)addressTypeIdx));
+      display.setCursor(0, 48);
+      display.print("Addr #");
+      display.print(addressIndex);
       display.setCursor(0, 56);
-      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-      display.print(" [BACK] ");
+      display.print("CANCEL=cycle type  CONFIRM=back");
       break;
 
     case SIGN_TX:
@@ -840,4 +857,11 @@ void startRestoreProcess() {
   restorePassphrase = false;
   updateRestoreMatches();
   currentState = MNEMONIC_RESTORE_LETTER;
+}
+
+void updateAddressDisplay() {
+  address_type_t type = (address_type_t)addressTypeIdx;
+  if (!address_generate(type, addressIndex, currentAddressStr)) {
+    strncpy(currentAddressStr, "Address gen error", MAX_ADDRESS_LEN);
+  }
 }
