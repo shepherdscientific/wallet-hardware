@@ -195,7 +195,7 @@
         "If address is too long for a scannable QR at 128x64, display 'Address too long for QR - use text view' message"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "SSD1306 128x64 can fit a QR version 3 (29x29 modules) at ~2px per module = 58px, leaving room for a border. Version 4 (33x33) at 1px is tight. Test with real camera."
     },
     {

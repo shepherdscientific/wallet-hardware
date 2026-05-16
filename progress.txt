@@ -144,3 +144,23 @@ Patterns discovered:
 - Bech32/32m differ only in checksum constant (1 vs 0x2bc830a3), same encode pipeline
 - Fixed-size buffers for Bitcoin address encoding: max Base58Check output ~35 chars, max Bech32 ~73 chars, safe bound is 128 chars
 - Address type cycling UI: store type index (0-2), CANCEL advances, CONFIRM returns to menu
+
+### 2026-05-16: US-009 — QR Code Rendering for Receive Address on SSD1306
+- Included ricmoo/QRCode library (`qrcode.h/c`): MIT-licensed, self-contained QR code generator with Reed-Solomon ECC
+- Created `qr_renderer.h/cpp`: wrapper with version auto-selection (v1–v4) and alphanumeric-optimized encoding
+- `qr_init()`: uppercases text for bech32 addresses → alphanumeric mode for ~2x capacity, pre-validates against per-version capacity tables (Low ECC), selects smallest viable version
+- Updated `wallet1.ino`:
+  - Added `QR_DISPLAY` state to WalletState enum (between SHOW_ADDRESS and SIGN_TX)
+  - SHOW_ADDRESS: CONFIRM now transitions to QR_DISPLAY instead of MAIN_MENU
+  - QR_DISPLAY: renders QR modules as filled rectangles at integer scale (1–3px) centered on 128x64 OLED; CANCEL=back to text, CONFIRM=menu
+  - "Address too long for QR - use text view" fallback when address exceeds version 4 capacity (78 bytes byte mode, 114 chars alphanumeric)
+  - Navigation bar updated: "CANCEL=cycle type  CONFIRM=QR" in SHOW_ADDRESS, "CANCEL=text  CONFIRM=menu" in QR_DISPLAY
+- 20 unit tests: version selection, module grid bounds, finder patterns, deterministic generation, alphanumeric mode detection, mixed-case upcase, bech32/bech32m/Base58 address QR generation, mask validity, buffer reuse, version 4 capacity
+- Tests compile with `g++ -I. qrcode.c qr_renderer.cpp test_qr_renderer.cpp -o test_qr_renderer`
+- All 139 tests pass (119 existing + 20 new)
+
+Patterns discovered:
+- QR capacity pre-validation: since qrcode_initBytes doesn't report overflow, compute minimum version from text length using capacity tables (NUM_RAW_DATA_MODULES, NUM_ERROR_CORRECTION_CODEWORDS) before encoding
+- Alphanumeric optimization: uppercase bech32 addresses to use MODE_ALPHANUMERIC (~2x capacity over BYTE) for better QR density
+- Pixel-perfect QR rendering: use `fillRect` at integer scale with centering offset ((128 - size*scale)/2) for sharp modules on 128x64 OLED
+- QR navigation: CONFIRM shows QR (state push), CANCEL returns to address text (state pop) — consistent with SIG_TX pattern

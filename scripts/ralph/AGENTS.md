@@ -117,3 +117,11 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 - **Fixed-size buffers for addresses:** Max Base58Check output ≈35 chars, max Bech32 ≈73 chars. Safe bound: 128 chars for MAX_ADDRESS_LEN.
 - **Address type cycling UI:** Store type index (0=P2PKH, 1=P2WPKH, 2=P2TR), CANCEL advances type, CONFIRM returns to menu. Generate via `address_generate(type, index, str)` which selects the correct derivation path (44'/84'/86').
 - Agents: `bitcoin-protocol-engineer`, `firmware-engineer`.
+
+### QR Code Rendering on SSD1306
+- Use ricmoo/QRCode library (MIT, self-contained) with `extern "C"` guards for cross-platform compatibility.
+- Wrapper (`qr_renderer.cpp`) handles: uppercase bech32 for alphanumeric mode, version auto-selection from capacity tables, capacity pre-validation (library doesn't report overflow).
+- Rendering in wallet1.ino: use `display.fillRect()` at integer scale (1-3px), centered via `(128 - size*scale)/2` offset.
+- Navigation pattern: CONFIRM pushes QR_DISPLAY state, CANCEL pops back to text view — same as SIGN_TX.
+- "Address too long" fallback when even version 4 (max 33x33 on 128x64) can't fit the address.
+- Host-based testing: compile with `g++ -I. qrcode.c qr_renderer.cpp test_qr_renderer.cpp` — no Arduino dependencies needed.
