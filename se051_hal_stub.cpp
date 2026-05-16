@@ -122,6 +122,17 @@ se051_err_t se051_get_pubkey(uint8_t key_id,
   return SE_OK;
 }
 
+se051_err_t se051_read_object(uint8_t obj_id,
+                              uint8_t *buf, size_t buf_len,
+                              size_t *out_len) {
+  if (!buf || buf_len == 0) return SE_ERR_PARAM;
+  if (!g_key_store_valid[obj_id]) return SE_ERR_NOTFOUND;
+  size_t copy_len = g_key_store_len[obj_id] < buf_len ? g_key_store_len[obj_id] : buf_len;
+  memcpy(buf, g_key_store_data[obj_id], copy_len);
+  if (out_len) *out_len = copy_len;
+  return SE_OK;
+}
+
 se051_err_t se051_selftest(void) {
   if (!g_initialized) return SE_ERR_COMM;
   return SE_OK;

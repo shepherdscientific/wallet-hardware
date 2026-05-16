@@ -244,4 +244,11 @@ se051_err_t se051_selftest(void) {
   return SE_OK;
 }
 
+se051_err_t se051_read_object(uint8_t obj_id,
+                              uint8_t *buf, size_t buf_len,
+                              size_t *out_len) {
+  (void)obj_id; (void)buf; (void)buf_len; (void)out_len;
+  return SE_ERR_COMM;
+}
+
 #endif // USE_SE051

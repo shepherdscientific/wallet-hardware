@@ -4,6 +4,8 @@
 *.bin
 test_bip39
 test_se051_stub
+test_wallet_storage
+test_bip32
 
 # Build Folders
 # These are generated during compilation and shouldn't be tracked
