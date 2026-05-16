@@ -56,18 +56,22 @@ enum WalletState {
   PQC_STATUS,
   TX_SUCCESS,
   TX_SIGN_ERROR,
-  WALLET_WIPED
+  WALLET_WIPED,
+  VERIFY_ADDRESS,
+  VERIFY_MATCH,
+  VERIFY_MISMATCH
 };
 WalletState currentState = PIN_SETUP;
 
 int menuIndex = 0;
-const int TOTAL_MENU_ITEMS = 5;
+const int TOTAL_MENU_ITEMS = 6;
 const char* menuItems[] = {
   "1. View Balance",
   "2. Receive (Addr)",
   "3. Sign Transaction",
   "4. PQC Quantum Sec",
-  "5. Demo Sign (PSBT)"
+  "5. Demo Sign (PSBT)",
+  "6. Verify Address"
 };
 
 // --- PIN STATE ---
@@ -121,6 +125,11 @@ uint32_t addressIndex = 0;
 uint8_t qrBuffer[QR_MAX_BUFFER_SIZE];
 QRCode qrCode;
 bool qrValid = false;
+
+// --- VERIFY ADDRESS STATE ---
+char verifyReceivedAddr[MAX_ADDRESS_LEN];
+bool verifyMatchResult;
+unsigned long verifyResultEnteredMs;
 
 // --- TRANSACTION REVIEW STATE ---
 psbt_t txReviewPsbt;
@@ -371,6 +380,17 @@ void loop() {
         serial_send_error(-1);
         currentState = MAIN_MENU;
       }
+    }
+  }
+
+  if (currentState == VERIFY_ADDRESS) {
+    serial_msg_t msg = serial_poll();
+    if (msg.cmd == SERIAL_CMD_VERIFY && msg.data_len > 0 && msg.data_len < MAX_ADDRESS_LEN) {
+      memcpy(verifyReceivedAddr, msg.data, msg.data_len + 1);
+      updateAddressDisplay();
+      verifyMatchResult = (strcmp(currentAddressStr, verifyReceivedAddr) == 0);
+      verifyResultEnteredMs = millis();
+      currentState = verifyMatchResult ? VERIFY_MATCH : VERIFY_MISMATCH;
     }
   }
 
@@ -703,6 +723,10 @@ void handleNavigation() {
             currentState = MAIN_MENU;
           }
         }
+        if (menuIndex == 5) {
+          updateAddressDisplay();
+          currentState = VERIFY_ADDRESS;
+        }
       }
       break;
 
@@ -791,6 +815,29 @@ void handleNavigation() {
       break;
 
     case WALLET_WIPED:
+      break;
+
+    case VERIFY_ADDRESS:
+      if (confirmPressed) {
+        currentState = MAIN_MENU;
+      } else if (cancelPressed) {
+        addressTypeIdx = (addressTypeIdx + 1) % 3;
+        updateAddressDisplay();
+      }
+      break;
+
+    case VERIFY_MATCH:
+      if (confirmPressed || cancelPressed) {
+        serial_send_verified();
+        currentState = MAIN_MENU;
+      }
+      break;
+
+    case VERIFY_MISMATCH:
+      if (confirmPressed || cancelPressed) {
+        serial_send_mismatch();
+        currentState = MAIN_MENU;
+      }
       break;
   }
 }
@@ -1329,6 +1376,59 @@ void renderCurrentState() {
       display.setCursor(0, 48);
       display.println("Restore from seed");
       break;
+
+    case VERIFY_ADDRESS:
+      display.setCursor(0, 0);
+      display.println("VERIFY ADDRESS");
+      display.println("---------------------");
+      display.setTextSize(1);
+      display.setCursor(0, 18);
+      display.println(currentAddressStr);
+      display.setCursor(0, 38);
+      display.print("Type: ");
+      display.println(address_type_name((address_type_t)addressTypeIdx));
+      display.setCursor(0, 48);
+      display.print("Addr #");
+      display.print(addressIndex);
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle type CONFIRM=back");
+      break;
+
+    case VERIFY_MATCH:
+      display.setCursor(0, 0);
+      display.println("ADDRESS VERIFIED");
+      display.println("---------------------");
+      display.setTextSize(1);
+      display.setCursor(0, 18);
+      display.println(currentAddressStr);
+      display.setCursor(0, 48);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.print(" VERIFIED OK ");
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 56);
+      display.print("Any button to return");
+      break;
+
+    case VERIFY_MISMATCH: {
+      unsigned long elapsed = millis() - verifyResultEnteredMs;
+      int cycle = (int)(elapsed / 300);
+
+      if (cycle < 6 && (cycle % 2 == 0)) {
+        display.invertDisplay(true);
+      } else {
+        display.invertDisplay(false);
+      }
+
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(0, 10);
+      display.setTextSize(2);
+      display.println("ADDRESS");
+      display.println("MISMATCH!");
+      display.setTextSize(1);
+      display.setCursor(0, 56);
+      display.print("Any button to return");
+      break;
+    }
   }
   display.display();
 }

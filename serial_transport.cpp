@@ -76,6 +76,22 @@ void serial_send_rejected(void) {
 #endif
 }
 
+void serial_send_verified(void) {
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.println("VERIFIED");
+#else
+    printf("VERIFIED\n");
+#endif
+}
+
+void serial_send_mismatch(void) {
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.println("MISMATCH");
+#else
+    printf("MISMATCH\n");
+#endif
+}
+
 static serial_msg_t parse_line(const char *line, size_t line_len) {
     serial_msg_t msg;
     memset(&msg, 0, sizeof(msg));

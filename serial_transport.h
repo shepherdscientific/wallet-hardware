@@ -33,6 +33,10 @@ void serial_send_error(int code);
 
 void serial_send_rejected(void);
 
+void serial_send_verified(void);
+
+void serial_send_mismatch(void);
+
 serial_msg_t serial_poll(void);
 
 void serial_inject_line(const char *line);
