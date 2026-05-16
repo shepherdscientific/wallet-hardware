@@ -64,6 +64,7 @@ enum WalletState {
   WAIT_PSBT,
   TX_FEE_REVIEW,
   TX_OUTPUT_REVIEW,
+  TX_RBF_CONFIRM,
   PQC_STATUS,
   TX_SUCCESS,
   TX_SIGN_ERROR,
@@ -188,6 +189,7 @@ uint32_t txNonChangeOutputCount;
 uint32_t txNonChangeIndices[PSBT_MAX_OUTPUTS];
 char txReviewAddressBuf[MAX_ADDRESS_LEN];
 bool txReviewReady;
+uint8_t txMetaPage;
 int txSignCount = 0;
 int txSignError = 0;
 bool psbtFromUsb = false;
@@ -310,6 +312,35 @@ uint32_t tx_estimate_vsize(const psbt_t *psbt) {
   return (base_size * 4 + witness_size + 3) / 4;
 }
 
+const char* get_input_segwit_label(const psbt_input_t *input) {
+  if (!input->witness_utxo.present) return "Legacy";
+  const uint8_t *spk = input->witness_utxo.script_pubkey;
+  uint8_t len = input->witness_utxo.script_pubkey_len;
+  if (len > 1 && spk[0] < 0xFD && (uint8_t)(spk[0] + 1) == len) {
+    spk++;
+    len = spk[-1];
+  }
+  if (len >= 2 && spk[0] == 0x00 && spk[1] == 0x14) return "SegWit v0";
+  if (len >= 2 && spk[0] == 0x00 && spk[1] == 0x20) return "SegWit v0 (P2WSH)";
+  if (len >= 2 && spk[0] == 0x51 && spk[1] == 0x20) return "Taproot v1";
+  return "Legacy";
+}
+
+void format_locktime(uint32_t locktime, char *buf, size_t len) {
+  if (locktime == 0) {
+    snprintf(buf, len, "Locktime: none");
+    return;
+  }
+  if (locktime < 500000000) {
+    snprintf(buf, len, "Locktime: Block %u", (unsigned)locktime);
+  } else {
+    time_t t = (time_t)locktime;
+    struct tm *tm_info = gmtime(&t);
+    snprintf(buf, len, "Locktime: %04d-%02d-%02d",
+             tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday);
+  }
+}
+
 void build_output_address(const psbt_output_t *output, char *out, size_t out_len) {
   if (output->bip32_derivation.present && output->bip32_derivation.path_len >= 5) {
     uint32_t purpose = output->bip32_derivation.path[0];
@@ -356,6 +387,7 @@ void initTransactionReviewFromBuffer(const uint8_t *psbt_data, size_t psbt_len) 
   memset(txNonChangeIndices, 0, sizeof(txNonChangeIndices));
   memset(txReviewAddressBuf, 0, sizeof(txReviewAddressBuf));
   txReviewReady = false;
+  txMetaPage = 0;
   memset(txInputSelected, 0, sizeof(txInputSelected));
   coinControlScrollIdx = 0;
   coinControlOwnedCount = 0;
@@ -490,6 +522,7 @@ void loop() {
         if (coinControlOwnedCount > 1) {
           currentState = COIN_CONTROL;
         } else {
+          txMetaPage = 0;
           currentState = TX_FEE_REVIEW;
         }
       } else {
@@ -919,6 +952,7 @@ void handleNavigation() {
             if (coinControlOwnedCount > 1) {
               currentState = COIN_CONTROL;
             } else {
+              txMetaPage = 0;
               currentState = TX_FEE_REVIEW;
             }
           } else {
@@ -989,7 +1023,36 @@ void handleNavigation() {
       }
       break;
 
-    case TX_FEE_REVIEW:
+    case TX_FEE_REVIEW: {
+      if (cancelPressed) {
+        txMetaPage++;
+        bool has_locktime = (txReviewPsbt.locktime != 0);
+        uint8_t maxPage = 1 + (has_locktime ? 1u : 0u) + (uint8_t)txReviewPsbt.input_count;
+        if (txMetaPage >= maxPage) {
+          if (psbtFromUsb) {
+            serial_send_rejected();
+          }
+          psbtFromUsb = false;
+          currentState = MAIN_MENU;
+        }
+      } else if (confirmPressed) {
+        if (txNonChangeOutputCount > 0) {
+          txReviewOutputIdx = 0;
+          build_output_address(&txReviewPsbt.outputs[txNonChangeIndices[0]],
+                               txReviewAddressBuf, sizeof(txReviewAddressBuf));
+          if (txHasRBF) {
+            currentState = TX_RBF_CONFIRM;
+          } else {
+            currentState = TX_OUTPUT_REVIEW;
+          }
+        } else {
+          initTransactionReview();
+        }
+      }
+      break;
+    }
+
+    case TX_RBF_CONFIRM:
       if (cancelPressed) {
         if (psbtFromUsb) {
           serial_send_rejected();
@@ -997,14 +1060,7 @@ void handleNavigation() {
         psbtFromUsb = false;
         currentState = MAIN_MENU;
       } else if (confirmPressed) {
-        if (txNonChangeOutputCount > 0) {
-          txReviewOutputIdx = 0;
-          build_output_address(&txReviewPsbt.outputs[txNonChangeIndices[0]],
-                               txReviewAddressBuf, sizeof(txReviewAddressBuf));
-          currentState = TX_OUTPUT_REVIEW;
-        } else {
-          initTransactionReview();
-        }
+        currentState = TX_OUTPUT_REVIEW;
       }
       break;
 
@@ -1308,6 +1364,7 @@ void handleNavigation() {
             if (txInputSelected[i]) { anySelected = true; break; }
           }
           if (anySelected) {
+            txMetaPage = 0;
             currentState = TX_FEE_REVIEW;
           }
         }
@@ -1721,48 +1778,98 @@ void renderCurrentState() {
       break;
 
     case TX_FEE_REVIEW:
-      display.setCursor(0, 0);
-      display.println("REVIEW TRANSACTION");
-      display.println("---------------------");
-      display.setCursor(0, 18);
-      {
-        char btc_buf[32];
-        uint64_t send_amt = txTotalOutputSats;
-        for (uint32_t i = 0; i < txReviewPsbt.output_count; i++) {
-          if (is_output_change(&txReviewPsbt.outputs[i]))
-            send_amt -= txReviewPsbt.outputs[i].amount;
+      if (txMetaPage == 0) {
+        display.setCursor(0, 0);
+        display.println("REVIEW TRANSACTION");
+        display.println("---------------------");
+        display.setCursor(0, 18);
+        {
+          char btc_buf[32];
+          uint64_t send_amt = txTotalOutputSats;
+          for (uint32_t i = 0; i < txReviewPsbt.output_count; i++) {
+            if (is_output_change(&txReviewPsbt.outputs[i]))
+              send_amt -= txReviewPsbt.outputs[i].amount;
+          }
+          format_btc(send_amt, btc_buf, sizeof(btc_buf));
+          display.print("Sending: ");
+          display.println(btc_buf);
         }
-        format_btc(send_amt, btc_buf, sizeof(btc_buf));
-        display.print("Sending: ");
-        display.println(btc_buf);
-      }
-      display.setCursor(0, 30);
-      {
-        char fee_buf[32];
-        format_sats((uint64_t)txFeeSats, fee_buf, sizeof(fee_buf));
-        display.print("Fee: ");
-        display.print(fee_buf);
-        display.println(" sats");
-      }
-      display.setCursor(0, 42);
-      display.print("Rate: ");
-      display.print(txFeeRateSatPerVb);
-      display.print(" sat/vB  ");
-      if (txHasRBF) {
-        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-        display.print("RBF:ON");
-      } else {
-        display.print("RBF:OFF");
-      }
-      display.setTextColor(SSD1306_WHITE);
-      if (txHighFee) {
-        display.setCursor(0, 52);
-        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-        display.print("HIGH FEE - Confirm?");
+        display.setCursor(0, 30);
+        {
+          char fee_buf[32];
+          format_sats((uint64_t)txFeeSats, fee_buf, sizeof(fee_buf));
+          display.print("Fee: ");
+          display.print(fee_buf);
+          display.println(" sats");
+        }
+        display.setCursor(0, 42);
+        display.print("Rate: ");
+        display.print(txFeeRateSatPerVb);
+        display.print(" sat/vB  ");
+        if (txHasRBF) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print("RBF:ON");
+        } else {
+          display.print("RBF:OFF");
+        }
         display.setTextColor(SSD1306_WHITE);
+        if (txHighFee) {
+          display.setCursor(0, 52);
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print("HIGH FEE - Confirm?");
+          display.setTextColor(SSD1306_WHITE);
+        }
+        display.setCursor(0, 56);
+        display.print("CANCEL=details CONFIRM=next");
+      } else {
+        bool has_locktime = (txReviewPsbt.locktime != 0);
+        uint8_t metaOff = txMetaPage - 1;
+        uint8_t maxPage = 1 + (has_locktime ? 1u : 0u) + (uint8_t)txReviewPsbt.input_count;
+        bool is_last = (txMetaPage + 1 >= maxPage);
+        if (has_locktime && metaOff == 0) {
+          display.setCursor(0, 0);
+          display.println("LOCKTIME DETAIL");
+          display.println("---------------------");
+          display.setCursor(0, 24);
+          char lt_buf[32];
+          format_locktime(txReviewPsbt.locktime, lt_buf, sizeof(lt_buf));
+          display.println(lt_buf);
+          display.setCursor(0, 56);
+          display.print(is_last ? "CANCEL=menu CONFIRM=next" : "CANCEL=next CONFIRM=next");
+        } else {
+          uint8_t inputIdx = has_locktime ? (metaOff - 1) : metaOff;
+          display.setCursor(0, 0);
+          display.print("INPUT ");
+          display.print(inputIdx + 1);
+          display.print("/");
+          display.println((unsigned)txReviewPsbt.input_count);
+          display.println("---------------------");
+          display.setCursor(0, 20);
+          display.print("Sig: ");
+          display.println(get_input_segwit_label(&txReviewPsbt.inputs[inputIdx]));
+          display.setCursor(0, 32);
+          display.print("Seq: 0x");
+          display.println(txReviewPsbt.inputs[inputIdx].sequence, HEX);
+        display.setCursor(0, 56);
+        display.print(is_last ? "CANCEL=menu CONFIRM=next" : "CANCEL=next CONFIRM=next");
+        }
       }
+      break;
+
+    case TX_RBF_CONFIRM:
+      display.setCursor(0, 0);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.println("  RBF ENABLED  ");
+      display.setTextColor(SSD1306_WHITE);
+      display.println("---------------------");
+      display.setCursor(0, 22);
+      display.println("Tx can be replaced");
+      display.println("by another tx with");
+      display.println("higher fee.");
+      display.println("");
+      display.print("Continue?");
       display.setCursor(0, 56);
-      display.print("CANCEL=cancel CONFIRM=ok");
+      display.print("CANCEL=No CONFIRM=Yes");
       break;
 
     case TX_OUTPUT_REVIEW:
