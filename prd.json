@@ -283,7 +283,7 @@
         "Passphrase RAM buffer zeroed immediately after seed derivation"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "The passphrase is intentionally not stored. This is the standard BIP39 design. The user must remember it independently of the mnemonic."
     },
     {
