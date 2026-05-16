@@ -474,7 +474,7 @@
         "README documents how to flash production vs dev firmware"
       ],
       "priority": 22,
-      "passes": false,
+      "passes": true,
       "notes": "This is critical. A hardware wallet with WiFi is not a hardware wallet — it's a hot wallet in a box. The WiFi OTA is useful for development iteration but must be completely absent in production."
     },
     {

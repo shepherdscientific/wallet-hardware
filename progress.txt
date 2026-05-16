@@ -436,3 +436,22 @@ Patterns discovered:
 - Scrollable list pattern for OLED 128x64: compute visible window of N items centered on selected index, with bounds clamping (firstIdx = max(0, lastIdx - visibleItems))
 - NVS erase pattern: prefs.begin(namespace, false) → prefs.clear() → prefs.end() — clear() erases all keys in namespace without needing individual key names
 - Factory reset as a multi-module orchestration: call SE delete (pin_manager), settings erase (settings), account erase (account_manager) from the state machine handler — each module owns its own storage
+
+--- US-022: Disable WiFi OTA in Production Builds ---
+- Added #ifdef DEV_BUILD guards around all WiFi/OTA code in wallet1.ino:
+  - #include <WiFi.h>, <ArduinoOTA.h>, "secrets.h" (lines 4-7)
+  - WiFi credential variables (ssid, password) (lines 37-40)
+  - WiFi.begin() + ArduinoOTA setup block in setup() (lines 414-431)
+  - ArduinoOTA.handle() in loop() (lines 460-464)
+- Non-DEV_BUILD builds include <esp_wifi.h> and call esp_wifi_stop() + esp_wifi_deinit() to power off radio
+- Default (no flag) is WiFi-disabled: only explicit -DDEV_BUILD enables WiFi for safety
+- Created platformio.ini with two environments:
+  - [env:dev]: -DDEV_BUILD, WiFi OTA enabled, depends on secrets.h for credentials
+  - [env:production]: -DPRODUCTION_BUILD, WiFi radio powered off, no secrets.h dependency
+  - CI assertion: production binary must be < 1.2 MB (WiFi stack excluded)
+- Updated README.md Build Targets section: replaced idf.py commands with PlatformIO pio run commands, added Flashing section, Production Verification section, and WiFi/OTA Dev vs Production comparison table
+- All 30 existing tests pass (10 settings + 12 account_manager + 8 coin_control)
+
+Patterns discovered:
+- WiFi guard pattern: #ifdef DEV_BUILD for WiFi includes/code, #else with esp_wifi_stop/deinit for production-safe default
+- PlatformIO dual-env pattern: shared [platformio] section with default_envs, per-env build_flags with -DDEV_BUILD vs -DPRODUCTION_BUILD
