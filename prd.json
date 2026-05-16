@@ -110,7 +110,7 @@
         "PIN change accessible from Settings menu after successful PIN authentication"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Store attempt counter in SE051C2 monotonic counter to prevent counter reset by reflashing NVS. CONFIRM/CANCEL button roles are swapped here vs. navigation: CONFIRM = increment digit, CANCEL = select digit."
     },
     {
