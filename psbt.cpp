@@ -87,6 +87,7 @@ static bool parse_global_map(const uint8_t *buf, size_t *pos, size_t end,
                 segwit = true;
                 tx_pos += 2;
             }
+            psbt->tx_has_segwit_marker = segwit;
 
             uint32_t tx_in_count = (uint32_t)read_varint(buf, &tx_pos, tx_end);
             psbt->input_count = tx_in_count;
@@ -469,4 +470,190 @@ int64_t psbt_get_fee(const psbt_t *psbt) {
     uint64_t out = psbt_get_total_output_value(psbt);
     if (in < out) return -1;
     return (int64_t)(in - out);
+}
+
+static void serialize_varint(uint64_t v, uint8_t *buf, size_t *pos) {
+    if (v < 0xFD) {
+        buf[(*pos)++] = (uint8_t)v;
+    } else if (v <= 0xFFFF) {
+        buf[(*pos)++] = 0xFD;
+        buf[(*pos)++] = (uint8_t)(v & 0xFF);
+        buf[(*pos)++] = (uint8_t)((v >> 8) & 0xFF);
+    } else if (v <= 0xFFFFFFFF) {
+        buf[(*pos)++] = 0xFE;
+        for (int i = 0; i < 4; i++)
+            buf[(*pos)++] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    } else {
+        buf[(*pos)++] = 0xFF;
+        for (int i = 0; i < 8; i++)
+            buf[(*pos)++] = (uint8_t)((v >> (i * 8)) & 0xFF);
+    }
+}
+
+static void serialize_u32le(uint32_t v, uint8_t *buf, size_t *pos) {
+    for (int i = 0; i < 4; i++)
+        buf[(*pos)++] = (uint8_t)((v >> (i * 8)) & 0xFF);
+}
+
+static void serialize_u64le(uint64_t v, uint8_t *buf, size_t *pos) {
+    for (int i = 0; i < 8; i++)
+        buf[(*pos)++] = (uint8_t)((v >> (i * 8)) & 0xFF);
+}
+
+static void serialize_kv(uint8_t *buf, size_t *pos, uint8_t key_type,
+                          const uint8_t *key_data, size_t key_data_len,
+                          const uint8_t *value, size_t value_len) {
+    size_t total_key_len = 1 + key_data_len;
+    serialize_varint(total_key_len, buf, pos);
+    buf[(*pos)++] = key_type;
+    if (key_data_len > 0) {
+        memcpy(buf + *pos, key_data, key_data_len);
+        *pos += key_data_len;
+    }
+    serialize_varint(value_len, buf, pos);
+    if (value_len > 0) {
+        memcpy(buf + *pos, value, value_len);
+        *pos += value_len;
+    }
+}
+
+static size_t serialize_unsigned_tx(const psbt_t *psbt, uint8_t *buf) {
+    size_t pos = 0;
+    serialize_u32le(psbt->tx_version, buf, &pos);
+    if (psbt->tx_has_segwit_marker) {
+        buf[pos++] = 0x00;
+        buf[pos++] = 0x01;
+    }
+    serialize_varint(psbt->input_count, buf, &pos);
+    for (uint32_t i = 0; i < psbt->input_count; i++) {
+        memcpy(buf + pos, psbt->inputs[i].txid, 32); pos += 32;
+        serialize_u32le(psbt->inputs[i].vout, buf, &pos);
+        buf[pos++] = 0x00;
+        serialize_u32le(psbt->inputs[i].sequence, buf, &pos);
+    }
+    serialize_varint(psbt->output_count, buf, &pos);
+    for (uint32_t i = 0; i < psbt->output_count; i++) {
+        serialize_u64le(psbt->outputs[i].amount, buf, &pos);
+        serialize_varint(psbt->outputs[i].script_pubkey_len, buf, &pos);
+        memcpy(buf + pos, psbt->outputs[i].script_pubkey,
+               psbt->outputs[i].script_pubkey_len);
+        pos += psbt->outputs[i].script_pubkey_len;
+    }
+    serialize_u32le(psbt->locktime, buf, &pos);
+    return pos;
+}
+
+static void serialize_input_map(uint8_t *buf, size_t *pos,
+                                 const psbt_input_t *input) {
+    if (input->witness_utxo.present) {
+        uint8_t val[256];
+        size_t vp = 0;
+        serialize_u64le(input->witness_utxo.amount, val, &vp);
+        memcpy(val + vp, input->witness_utxo.script_pubkey,
+               input->witness_utxo.script_pubkey_len);
+        vp += input->witness_utxo.script_pubkey_len;
+        serialize_kv(buf, pos, PSBT_IN_WITNESS_UTXO, NULL, 0, val, vp);
+    }
+    if (input->sighash_type != 0) {
+        uint8_t val[4];
+        size_t vp = 0;
+        serialize_u32le(input->sighash_type, val, &vp);
+        serialize_kv(buf, pos, PSBT_IN_SIGHASH_TYPE, NULL, 0, val, vp);
+    }
+    if (input->bip32_derivation.present) {
+        size_t key_len = 4 + input->bip32_derivation.path_len * 4;
+        uint8_t key[60];
+        size_t kp = 0;
+        memcpy(key + kp, input->bip32_derivation.fingerprint, 4); kp += 4;
+        for (uint8_t j = 0; j < input->bip32_derivation.path_len; j++)
+            serialize_u32le(input->bip32_derivation.path[j], key, &kp);
+        serialize_kv(buf, pos, PSBT_IN_BIP32_DERIVATION, key, key_len,
+                     input->bip32_derivation.pubkey, PSBT_PUBKEY_LEN);
+    }
+    if (input->has_taproot) {
+        serialize_kv(buf, pos, PSBT_IN_TAP_INTERNAL_KEY, NULL, 0,
+                     input->tap_internal_key, 32);
+    }
+    if (input->has_partial_sig) {
+        serialize_kv(buf, pos, PSBT_IN_PARTIAL_SIG,
+                     input->partial_sig_pubkey, PSBT_PUBKEY_LEN,
+                     input->partial_sig, input->partial_sig_len);
+    }
+    if (input->has_tap_key_sig) {
+        serialize_kv(buf, pos, PSBT_IN_TAP_KEY_SIG, NULL, 0,
+                     input->tap_key_sig, PSBT_SCHNORR_SIG_LEN);
+    }
+    serialize_kv(buf, pos, PSBT_IN_PREVIOUS_TXID, NULL, 0,
+                 input->txid, PSBT_TXID_LEN);
+    {
+        uint8_t vout[4];
+        size_t vp = 0;
+        serialize_u32le(input->vout, vout, &vp);
+        serialize_kv(buf, pos, PSBT_IN_OUTPUT_INDEX, NULL, 0, vout, vp);
+    }
+    {
+        uint8_t seq[4];
+        size_t sp = 0;
+        serialize_u32le(input->sequence, seq, &sp);
+        serialize_kv(buf, pos, PSBT_IN_SEQUENCE, NULL, 0, seq, sp);
+    }
+}
+
+static void serialize_output_map(uint8_t *buf, size_t *pos,
+                                  const psbt_output_t *output) {
+    {
+        uint8_t amount[8];
+        size_t ap = 0;
+        serialize_u64le(output->amount, amount, &ap);
+        serialize_kv(buf, pos, PSBT_OUT_AMOUNT, NULL, 0, amount, ap);
+    }
+    if (output->script_pubkey_len > 0) {
+        serialize_kv(buf, pos, PSBT_OUT_SCRIPT, NULL, 0,
+                     output->script_pubkey, output->script_pubkey_len);
+    }
+    if (output->bip32_derivation.present) {
+        size_t key_len = 4 + output->bip32_derivation.path_len * 4;
+        uint8_t key[60];
+        size_t kp = 0;
+        memcpy(key + kp, output->bip32_derivation.fingerprint, 4); kp += 4;
+        for (uint8_t j = 0; j < output->bip32_derivation.path_len; j++)
+            serialize_u32le(output->bip32_derivation.path[j], key, &kp);
+        serialize_kv(buf, pos, PSBT_OUT_BIP32_DERIVATION, key, key_len,
+                     output->bip32_derivation.pubkey, PSBT_PUBKEY_LEN);
+    }
+}
+
+size_t psbt_serialize(const psbt_t *psbt, uint8_t *buf, size_t buf_max) {
+    if (!psbt || !buf || buf_max < 16) return 0;
+
+    size_t pos = 0;
+    buf[pos++] = 0x70;
+    buf[pos++] = 0x73;
+    buf[pos++] = 0x62;
+    buf[pos++] = 0x74;
+    buf[pos++] = (psbt->version == 0) ? 0xff : 0xfe;
+
+    if (psbt->version == 0 && (psbt->has_global_tx || psbt->input_count > 0)) {
+        uint8_t utx[1024];
+        size_t utx_len = serialize_unsigned_tx(psbt, utx);
+        serialize_kv(buf, &pos, PSBT_GLOBAL_UNSIGNED_TX, NULL, 0, utx, utx_len);
+    } else if (psbt->version == 2) {
+        uint8_t ver[4];
+        size_t vp = 0;
+        serialize_u32le(psbt->tx_version, ver, &vp);
+        serialize_kv(buf, &pos, PSBT_GLOBAL_VERSION, NULL, 0, ver, vp);
+    }
+    buf[pos++] = 0x00;
+
+    for (uint32_t i = 0; i < psbt->input_count; i++) {
+        serialize_input_map(buf, &pos, &psbt->inputs[i]);
+        buf[pos++] = 0x00;
+    }
+
+    for (uint32_t i = 0; i < psbt->output_count; i++) {
+        serialize_output_map(buf, &pos, &psbt->outputs[i]);
+        buf[pos++] = 0x00;
+    }
+
+    return pos;
 }

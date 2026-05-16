@@ -13,6 +13,8 @@
 #include "psbt.h"
 #include "psbt_signer.h"
 #include "bech32.h"
+#include "serial_transport.h"
+#include "base64.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -48,6 +50,7 @@ enum WalletState {
   SHOW_ADDRESS,
   QR_DISPLAY,
   SIGN_TX,
+  WAIT_PSBT,
   TX_FEE_REVIEW,
   TX_OUTPUT_REVIEW,
   PQC_STATUS,
@@ -58,12 +61,13 @@ enum WalletState {
 WalletState currentState = PIN_SETUP;
 
 int menuIndex = 0;
-const int TOTAL_MENU_ITEMS = 4;
+const int TOTAL_MENU_ITEMS = 5;
 const char* menuItems[] = {
   "1. View Balance",
   "2. Receive (Addr)",
   "3. Sign Transaction",
-  "4. PQC Quantum Sec"
+  "4. PQC Quantum Sec",
+  "5. Demo Sign (PSBT)"
 };
 
 // --- PIN STATE ---
@@ -133,6 +137,7 @@ char txReviewAddressBuf[MAX_ADDRESS_LEN];
 bool txReviewReady;
 int txSignCount = 0;
 int txSignError = 0;
+bool psbtFromUsb = false;
 
 const char *const TX_SEND_LABEL = "SEND";
 const char *const TX_CHANGE_LABEL = "CHANGE";
@@ -255,7 +260,7 @@ void build_output_address(const psbt_output_t *output, char *out, size_t out_len
   snprintf(out, out_len, "hex:%.4x...", (unsigned)output->script_pubkey[2]);
 }
 
-void initTransactionReview() {
+void initTransactionReviewFromBuffer(const uint8_t *psbt_data, size_t psbt_len) {
   memset(&txReviewPsbt, 0, sizeof(txReviewPsbt));
   txReviewOutputIdx = 0;
   txTotalInputSats = 0;
@@ -269,7 +274,7 @@ void initTransactionReview() {
   memset(txReviewAddressBuf, 0, sizeof(txReviewAddressBuf));
   txReviewReady = false;
 
-  psbt_err_t err = psbt_parse(DEMO_PSBT, DEMO_PSBT_LEN, &txReviewPsbt);
+  psbt_err_t err = psbt_parse(psbt_data, psbt_len, &txReviewPsbt);
   if (err != PSBT_OK) {
     txReviewReady = false;
     return;
@@ -300,8 +305,13 @@ void initTransactionReview() {
   txReviewReady = true;
 }
 
+void initTransactionReview() {
+  initTransactionReviewFromBuffer(DEMO_PSBT, DEMO_PSBT_LEN);
+}
+
 void setup() {
   Serial.begin(115200);
+  serial_init();
   Wire.begin(SDA_PIN, SCL_PIN);
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) for(;;);
 
@@ -348,6 +358,20 @@ void setup() {
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.handle();
+  }
+
+  if (currentState == WAIT_PSBT) {
+    serial_msg_t msg = serial_poll();
+    if (msg.cmd == SERIAL_CMD_PSBT && msg.data_len > 0) {
+      psbtFromUsb = true;
+      initTransactionReviewFromBuffer(msg.data, msg.data_len);
+      if (txReviewReady) {
+        currentState = TX_FEE_REVIEW;
+      } else {
+        serial_send_error(-1);
+        currentState = MAIN_MENU;
+      }
+    }
   }
 
   if ((currentState == MNEMONIC_DISPLAY || currentState == MNEMONIC_VERIFY) &&
@@ -670,6 +694,15 @@ void handleNavigation() {
         }
         if (menuIndex == 2) currentState = SIGN_TX;
         if (menuIndex == 3) currentState = PQC_STATUS;
+        if (menuIndex == 4) {
+          psbtFromUsb = false;
+          initTransactionReview();
+          if (txReviewReady) {
+            currentState = TX_FEE_REVIEW;
+          } else {
+            currentState = MAIN_MENU;
+          }
+        }
       }
       break;
 
@@ -704,17 +737,28 @@ void handleNavigation() {
       if (cancelPressed) {
         currentState = MAIN_MENU;
       } else if (confirmPressed) {
-        initTransactionReview();
-        if (txReviewReady) {
-          currentState = TX_FEE_REVIEW;
-        } else {
-          currentState = MAIN_MENU;
+        psbtFromUsb = false;
+        serial_send_ready();
+        currentState = WAIT_PSBT;
+      }
+      break;
+
+    case WAIT_PSBT:
+      if (cancelPressed) {
+        if (psbtFromUsb) {
+          serial_send_rejected();
         }
+        psbtFromUsb = false;
+        currentState = MAIN_MENU;
       }
       break;
 
     case TX_FEE_REVIEW:
       if (cancelPressed) {
+        if (psbtFromUsb) {
+          serial_send_rejected();
+        }
+        psbtFromUsb = false;
         currentState = MAIN_MENU;
       } else if (confirmPressed) {
         if (txNonChangeOutputCount > 0) {
@@ -732,6 +776,10 @@ void handleNavigation() {
       if (cancelPressed) {
         txReviewOutputIdx++;
         if (txReviewOutputIdx >= txNonChangeOutputCount) {
+          if (psbtFromUsb) {
+            serial_send_rejected();
+          }
+          psbtFromUsb = false;
           currentState = MAIN_MENU;
         } else {
           build_output_address(&txReviewPsbt.outputs[txNonChangeIndices[txReviewOutputIdx]],
@@ -1107,6 +1155,20 @@ void renderCurrentState() {
       display.print("[CANCEL=no]  [CONFIRM=yes]");
       break;
 
+    case WAIT_PSBT:
+      display.setCursor(0, 0);
+      display.println("PSBT SIGNING");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.println("Waiting for PSBT");
+      display.println("over USB CDC...");
+      display.setCursor(0, 42);
+      display.println("Send PSBT as base64");
+      display.setTextSize(1);
+      display.setCursor(0, 56);
+      display.print("CANCEL to abort");
+      break;
+
     case TX_FEE_REVIEW:
       display.setCursor(0, 0);
       display.println("REVIEW TRANSACTION");
@@ -1213,12 +1275,24 @@ void renderCurrentState() {
         char msg[32];
         snprintf(msg, sizeof(msg), "%d input(s) signed.", txSignCount);
         display.println(msg);
+        if (psbtFromUsb) {
+          uint8_t out_buf[PSBT_MAX_BUFFER];
+          size_t out_len = psbt_serialize(&txReviewPsbt, out_buf, sizeof(out_buf));
+          if (out_len > 0) {
+            serial_send_signed(out_buf, out_len);
+          }
+          psbtFromUsb = false;
+        }
       } else {
         display.println("NO INPUTS");
         display.setTextSize(1);
         display.println("");
         display.println("No owned inputs found");
         display.println("in this PSBT.");
+        if (psbtFromUsb) {
+          serial_send_error(-2);
+          psbtFromUsb = false;
+        }
       }
       display.println("Returning to menu...");
       display.display();
@@ -1237,6 +1311,10 @@ void renderCurrentState() {
       display.print("SE error: ");
       display.println(txSignError);
       display.println("No PSBT returned.");
+      if (psbtFromUsb) {
+        serial_send_error(txSignError);
+        psbtFromUsb = false;
+      }
       display.display();
       delay(2500);
       currentState = MAIN_MENU;

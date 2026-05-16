@@ -110,6 +110,7 @@ typedef struct {
     uint32_t        locktime;
     uint32_t        tx_version;
     bool            has_global_tx;
+    bool            tx_has_segwit_marker;
     psbt_input_t    inputs[PSBT_MAX_INPUTS];
     psbt_output_t   outputs[PSBT_MAX_OUTPUTS];
 } psbt_t;
@@ -121,6 +122,8 @@ uint64_t   psbt_get_total_input_value(const psbt_t *psbt);
 uint64_t   psbt_get_total_output_value(const psbt_t *psbt);
 
 int64_t    psbt_get_fee(const psbt_t *psbt);
+
+size_t     psbt_serialize(const psbt_t *psbt, uint8_t *buf, size_t buf_max);
 
 #ifdef __cplusplus
 }

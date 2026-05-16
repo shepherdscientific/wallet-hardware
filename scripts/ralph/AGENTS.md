@@ -60,6 +60,24 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 
 ## 6. Firmware / C++ Patterns (ESP32-S3 + Arduino)
 
+### PRD Bootstrap Pattern
+- When no `prd.json` exists, create one with the following structure before starting implementation:
+  ```json
+  {
+    "userStories": [
+      {
+        "id": "US-001",
+        "description": "Brief description of the story",
+        "priority": 1,
+        "passes": false,
+        "notes": ""
+      }
+    ]
+  }
+  ```
+- This ensures the agent has a clear task list to work from and can track progress properly.
+- Use `jq` to update the file as described in Section 4.
+
 ### SEAL (Secure Element Abstraction Layer)
 - Define HAL in a single header (`se051_hal.h`) with `extern "C"` guards.
 - Two backends selected by build flag: `-DUSE_SE051` (real I2C) or `-DUSE_SE_STUB` (CI mock).
