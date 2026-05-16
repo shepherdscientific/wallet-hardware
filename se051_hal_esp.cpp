@@ -74,6 +74,7 @@ static se051_err_t i2c_xfer(uint8_t address,
 #define APDU_CLA          0x80
 #define APDU_INS_GET_DATA  0xCA
 #define APDU_INS_PUT_DATA  0xDA
+#define APDU_INS_DELETE_KEY 0xE0
 #define APDU_INS_GET_RND   0x84
 #define APDU_INS_INIT_AUTH 0x82
 #define APDU_INS_EXT_AUTH  0x86
@@ -211,7 +212,7 @@ se051_err_t se051_store_key(uint8_t key_id,
 se051_err_t se051_delete_key(uint8_t key_id) {
   if (!g_se051_ready) return SE_ERR_COMM;
 
-  uint8_t apdu[] = { APDU_CLA, APDU_INS_PUT_DATA, 0x00, key_id, 0x00 };
+  uint8_t apdu[] = { APDU_CLA, APDU_INS_DELETE_KEY, 0x00, key_id, 0x00 };
   return i2c_write(SE051_I2C_ADDR, apdu, sizeof(apdu));
 }
 
