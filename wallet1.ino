@@ -4,6 +4,9 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include "secrets.h"
+#include "se051_hal.h"
+#include "pin_manager.h"
+#include "wallet_storage.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -20,8 +23,18 @@ const char* ssid = SECRET_SSID;
 const char* password = SECRET_PASS;
 
 // --- WALLET STATE MACHINE ---
-enum WalletState { MAIN_MENU, SHOW_BALANCE, SHOW_ADDRESS, SIGN_TX, PQC_STATUS, TX_SUCCESS };
-WalletState currentState = MAIN_MENU;
+enum WalletState {
+  PIN_SETUP,
+  PIN_ENTRY,
+  MAIN_MENU,
+  SHOW_BALANCE,
+  SHOW_ADDRESS,
+  SIGN_TX,
+  PQC_STATUS,
+  TX_SUCCESS,
+  WALLET_WIPED
+};
+WalletState currentState = PIN_SETUP;
 
 int menuIndex = 0;
 const int TOTAL_MENU_ITEMS = 4;
@@ -32,9 +45,24 @@ const char* menuItems[] = {
   "4. PQC Quantum Sec"
 };
 
+// --- PIN STATE ---
+uint8_t pinDigits[6] = {0};
+uint8_t pinPosition = 0;
+uint8_t pinDigitValue = 0;
+uint8_t pinAttempts = 0;
+
 // --- REAL BITCOIN DATA (MOCK MINTED) ---
-const char* BTC_ADDRESS = "bc1p5d7txrekgvk0llknw8vkm6680zhv93"; // Bitcoin Taproot (Bech32m)
-uint64_t walletSats = 42050000; // 0.42050000 BTC
+const char* BTC_ADDRESS = "bc1p5d7txrekgvk0llknw8vkm6680zhv93";
+uint64_t walletSats = 42050000;
+
+// --- DEVICE UID (ESP32) ---
+void pin_get_device_uid(uint8_t uid[8]) {
+  uint64_t mac = ESP.getEfuseMac();
+  memset(uid, 0, 8);
+  for (int i = 0; i < 6; i++) {
+    uid[6 - i] = (mac >> (i * 8)) & 0xFF;
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -43,13 +71,13 @@ void setup() {
 
   pinMode(BTN_CONFIRM, INPUT_PULLUP);
   pinMode(BTN_CANCEL, INPUT_PULLUP);
-  
+
   showBootSplash();
-  
+
   // --- NON-BLOCKING WIFI WITH TIMEOUT ---
   WiFi.begin(ssid, password);
   int timeout = 0;
-  while (WiFi.status() != WL_CONNECTED && timeout < 8) { // 4 seconds max
+  while (WiFi.status() != WL_CONNECTED && timeout < 8) {
     delay(500);
     timeout++;
   }
@@ -61,17 +89,32 @@ void setup() {
     Serial.println("OTA Active");
   }
 
-  currentState = MAIN_MENU;
+  se051_init();
+
+  if (pin_is_set()) {
+    currentState = PIN_ENTRY;
+    pinAttempts = pin_get_attempts();
+    pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+    pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+    pinPosition = 0;
+    pinDigitValue = 0;
+  } else {
+    currentState = PIN_SETUP;
+    pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+    pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+    pinPosition = 0;
+    pinDigitValue = 0;
+  }
 }
 
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.handle();
   }
-  
+
   handleNavigation();
   renderCurrentState();
-  delay(30); // Yield to system threads
+  delay(30);
 }
 
 // --- UNIVERSAL 2-BUTTON NAVIGATION ENGINE ---
@@ -79,19 +122,61 @@ void handleNavigation() {
   bool confirmPressed = (digitalRead(BTN_CONFIRM) == LOW);
   bool cancelPressed = (digitalRead(BTN_CANCEL) == LOW);
 
-  if (!confirmPressed && !cancelPressed) return; // No input, exit fast
+  if (!confirmPressed && !cancelPressed) return;
 
-  // Small debounce delay to prevent double-clicks
-  delay(180); 
+  delay(180);
 
   switch (currentState) {
+    case PIN_SETUP:
+      if (confirmPressed) {
+        pinDigitValue = (pinDigitValue + 1) % 10;
+      } else if (cancelPressed) {
+        pinDigits[pinPosition] = pinDigitValue;
+        pinPosition++;
+        pinDigitValue = 0;
+        if (pinPosition >= 6) {
+          if (pin_setup(pinDigits)) {
+            pin_reset_attempts();
+            pinAttempts = 0;
+            currentState = MAIN_MENU;
+          }
+        }
+      }
+      break;
+
+    case PIN_ENTRY:
+      if (confirmPressed) {
+        pinDigitValue = (pinDigitValue + 1) % 10;
+      } else if (cancelPressed) {
+        pinDigits[pinPosition] = pinDigitValue;
+        pinPosition++;
+        pinDigitValue = 0;
+        if (pinPosition >= 6) {
+          if (pin_verify(pinDigits)) {
+            pin_reset_attempts();
+            pinAttempts = 0;
+            currentState = MAIN_MENU;
+          } else {
+            pin_increment_attempts();
+            pinAttempts = pin_get_attempts();
+            if (pinAttempts >= 5) {
+              wallet_factory_reset();
+              currentState = WALLET_WIPED;
+            } else {
+              pinPosition = 0;
+              pinDigitValue = 0;
+              pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+              pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+            }
+          }
+        }
+      }
+      break;
+
     case MAIN_MENU:
       if (cancelPressed) {
-        // Cancel cycles down through menu options
         menuIndex = (menuIndex + 1) % TOTAL_MENU_ITEMS;
-      } 
-      else if (confirmPressed) {
-        // Confirm enters the selected submenu state
+      } else if (confirmPressed) {
         if (menuIndex == 0) currentState = SHOW_BALANCE;
         if (menuIndex == 1) currentState = SHOW_ADDRESS;
         if (menuIndex == 2) currentState = SIGN_TX;
@@ -103,7 +188,6 @@ void handleNavigation() {
     case SHOW_ADDRESS:
     case PQC_STATUS:
     case TX_SUCCESS:
-      // Inside submenus, hitting either button returns to main menu
       if (cancelPressed || confirmPressed) {
         currentState = MAIN_MENU;
       }
@@ -111,13 +195,13 @@ void handleNavigation() {
 
     case SIGN_TX:
       if (cancelPressed) {
-        // Cancel Rejects and exits back to menu safely
         currentState = MAIN_MENU;
-      } 
-      else if (confirmPressed) {
-        // Confirm signs the transaction
+      } else if (confirmPressed) {
         executeSigningSequence();
       }
+      break;
+
+    case WALLET_WIPED:
       break;
   }
 }
@@ -129,6 +213,54 @@ void renderCurrentState() {
   display.setTextSize(1);
 
   switch (currentState) {
+    case PIN_SETUP:
+      display.setCursor(0, 0);
+      display.println("SET PIN");
+      display.println("---------------------");
+      display.setCursor(20, 20);
+      for (int i = 0; i < 6; i++) {
+        if (i < pinPosition) {
+          display.print("*");
+        } else if (i == pinPosition) {
+          display.print("[");
+          display.print(pinDigitValue);
+          display.print("]");
+        } else {
+          display.print("_");
+        }
+        if (i < 5) display.print(" ");
+      }
+      display.setCursor(0, 45);
+      display.print("CONFIRM=change CANCEL=next");
+      break;
+
+    case PIN_ENTRY:
+      display.setCursor(0, 0);
+      display.println("ENTER PIN");
+      display.println("---------------------");
+      display.setCursor(20, 20);
+      for (int i = 0; i < 6; i++) {
+        if (i < pinPosition) {
+          display.print("*");
+        } else if (i == pinPosition) {
+          display.print("[");
+          display.print(pinDigitValue);
+          display.print("]");
+        } else {
+          display.print("_");
+        }
+        if (i < 5) display.print(" ");
+      }
+      if (pinAttempts > 0) {
+        display.setCursor(0, 40);
+        display.print("Attempt ");
+        display.print(pinAttempts);
+        display.print(" of 5");
+      }
+      display.setCursor(0, 56);
+      display.print("CONFIRM=change CANCEL=next");
+      break;
+
     case MAIN_MENU:
       display.setCursor(0, 0);
       display.println("COINCUBE BITCOIN  [v0.1]");
@@ -149,13 +281,13 @@ void renderCurrentState() {
       display.println("---------------------");
       display.setCursor(0, 20);
       display.setTextSize(2);
-      display.print("0.42050"); 
+      display.print("0.42050");
       display.setTextSize(1);
       display.println(" BTC");
       display.setCursor(0, 42);
       display.println("Sats: 42,050,000");
       display.setCursor(0, 56);
-      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE); // Invert text for button label
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
       display.print(" [BACK] ");
       break;
 
@@ -165,7 +297,6 @@ void renderCurrentState() {
       display.println("---------------------");
       display.setTextSize(1);
       display.setCursor(0, 20);
-      // Chunking long Taproot address to fit screen elegantly
       display.println("bc1p5d7txrekgvk0l");
       display.println("lknw8vkm6680zhv93");
       display.setCursor(0, 45);
@@ -194,8 +325,8 @@ void renderCurrentState() {
       display.println("---------------------");
       display.setCursor(0, 18);
       display.print("NIST PQC: "); display.println("ML-KEM-512");
-      display.print("Hardware: "); display.println("ATECC608 (ECC)");
-      display.print("FPGA Bus: "); display.println("Ready/Isolated");
+      display.print("Hardware: "); display.println("NXP SE051C2");
+      display.print("Sec Element: "); display.println("secp256k1");
       display.setCursor(0, 52);
       display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
       display.print(" [BACK] ");
@@ -211,6 +342,16 @@ void renderCurrentState() {
       display.display();
       delay(2500);
       currentState = MAIN_MENU;
+      break;
+
+    case WALLET_WIPED:
+      display.setCursor(0, 10);
+      display.setTextSize(2);
+      display.println("WALLET");
+      display.println("WIPED");
+      display.setTextSize(1);
+      display.setCursor(0, 48);
+      display.println("Restore from seed");
       break;
   }
   display.display();
@@ -229,7 +370,6 @@ void executeSigningSequence() {
   delay(500);
 
   display.println("Calling Secure Element...");
-  // This is where Wire.write transfers the hash to your ATECC608
   display.display();
   delay(1000);
 

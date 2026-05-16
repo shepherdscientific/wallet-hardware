@@ -5,7 +5,7 @@ typedef struct {
   uint8_t  buf[64];
   uint32_t state[8];
   uint64_t bitlen;
-} sha256_ctx;
+} sha256_ctx_internal;
 
 static const uint32_t K[64] = {
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
@@ -30,7 +30,7 @@ static uint32_t rotr32(uint32_t x, uint32_t n) {
   return (x >> n) | (x << (32 - n));
 }
 
-static void sha256_transform(sha256_ctx *ctx) {
+static void sha256_transform_internal(sha256_ctx_internal *ctx) {
   uint32_t w[64];
   uint32_t a, b, c, d, e, f, g, h, t1, t2;
 
@@ -84,7 +84,7 @@ static void sha256_transform(sha256_ctx *ctx) {
   ctx->state[7] += h;
 }
 
-static void sha256_init(sha256_ctx *ctx) {
+static void sha256_init_internal(sha256_ctx_internal *ctx) {
   memset(ctx, 0, sizeof(*ctx));
   ctx->state[0] = 0x6a09e667;
   ctx->state[1] = 0xbb67ae85;
@@ -96,7 +96,7 @@ static void sha256_init(sha256_ctx *ctx) {
   ctx->state[7] = 0x5be0cd19;
 }
 
-static void sha256_update(sha256_ctx *ctx, const uint8_t *data, size_t len) {
+static void sha256_update_internal(sha256_ctx_internal *ctx, const uint8_t *data, size_t len) {
   size_t idx = (size_t)(ctx->bitlen / 8) % 64;
   ctx->bitlen += (uint64_t)len * 8;
 
@@ -109,19 +109,19 @@ static void sha256_update(sha256_ctx *ctx, const uint8_t *data, size_t len) {
     len -= copy;
 
     if (idx == 64) {
-      sha256_transform(ctx);
+      sha256_transform_internal(ctx);
       idx = 0;
     }
   }
 }
 
-static void sha256_final(sha256_ctx *ctx, uint8_t hash[SHA256_DIGEST_LENGTH]) {
+static void sha256_final_internal(sha256_ctx_internal *ctx, uint8_t hash[SHA256_DIGEST_LENGTH]) {
   size_t idx = (size_t)(ctx->bitlen / 8) % 64;
 
   ctx->buf[idx++] = 0x80;
   if (idx > 56) {
     memset(ctx->buf + idx, 0, 64 - idx);
-    sha256_transform(ctx);
+    sha256_transform_internal(ctx);
     idx = 0;
   }
   memset(ctx->buf + idx, 0, 56 - idx);
@@ -135,7 +135,7 @@ static void sha256_final(sha256_ctx *ctx, uint8_t hash[SHA256_DIGEST_LENGTH]) {
   ctx->buf[61] = (uint8_t)(bits >> 16);
   ctx->buf[62] = (uint8_t)(bits >> 8);
   ctx->buf[63] = (uint8_t)(bits);
-  sha256_transform(ctx);
+  sha256_transform_internal(ctx);
 
   for (int i = 0; i < 8; i++) {
     hash[i * 4]     = (uint8_t)(ctx->state[i] >> 24);
@@ -145,11 +145,26 @@ static void sha256_final(sha256_ctx *ctx, uint8_t hash[SHA256_DIGEST_LENGTH]) {
   }
 }
 
+void sha256_init(sha256_ctx *ctx) {
+  sha256_ctx_internal *c = (sha256_ctx_internal *)ctx;
+  sha256_init_internal(c);
+}
+
+void sha256_update(sha256_ctx *ctx, const uint8_t *data, size_t len) {
+  sha256_ctx_internal *c = (sha256_ctx_internal *)ctx;
+  sha256_update_internal(c, data, len);
+}
+
+void sha256_final(sha256_ctx *ctx, uint8_t hash[SHA256_DIGEST_LENGTH]) {
+  sha256_ctx_internal *c = (sha256_ctx_internal *)ctx;
+  sha256_final_internal(c, hash);
+}
+
 void sha256(const uint8_t *data, size_t len, uint8_t hash[SHA256_DIGEST_LENGTH]) {
-  sha256_ctx ctx;
-  sha256_init(&ctx);
+  sha256_ctx_internal ctx;
+  sha256_init_internal(&ctx);
   if (data && len > 0) {
-    sha256_update(&ctx, data, len);
+    sha256_update_internal(&ctx, data, len);
   }
-  sha256_final(&ctx, hash);
+  sha256_final_internal(&ctx, hash);
 }
