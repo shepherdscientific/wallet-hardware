@@ -24,5 +24,5 @@ Thumbs.db
 secrets.h
 
 
-!scripts/**
+scripts/*/
 
