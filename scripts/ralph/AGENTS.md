@@ -161,3 +161,24 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 - SE temp key pattern: derive child → store as PSBT_TEMP_KEY_ID (0xF0) → sign → delete temp → on ANY error, flush ALL signatures to prevent partial PSBT.
 - PSBT v0 builder: unsigned TX KV wraps TX content INLINE (not pre-buffer reference): magic || varint(key_len=1) || key_type(0x00) || varint(tx_len) || unsigned_tx_bytes || separator(0x00) || input_maps || separator || output_maps || separator.
 - Key derivation: read master key from SE (0x01) + chain code (0x02), walk path with hd_ckd_priv(). All-hardened paths avoid EC scalarmult bug. Non-hardened paths affected by known EC doubling parity issue for large scalars.
+
+### Settings / NVS Persistence Pattern
+- Follow the `account_manager` dual-backend pattern: `#if defined(ARDUINO) && defined(ESP32)` for real NVS (Preferences), `#else` for host/stub (in-memory static globals).
+- Use `Preferences.h` with namespace string (e.g., `"settings"`), `.begin(ns, false)`, `.putUChar()`, `.getUChar()`.
+- Group all shared utility functions (ms conversion, labels) outside the `#if/else` blocks for single-definition compilation.
+- Use `typedef enum` with a `_COUNT` sentinel value for modulo bounds-checking on option selection (e.g., `SETTINGS_DISP_TIMEOUT_COUNT`).
+- Agents: `firmware-engineer`.
+
+### Universal Display Wake / Auto-Dim Pattern
+- Single check at top of `handleNavigation()`: `if (!displayOn) { displayOn = true; lastActivityMs = millis(); return; }`. Early return prevents action on wake press.
+- In `renderCurrentState()`: `if (!displayOn) { display.clearDisplay(); display.display(); return; }` at the very top — no per-state checks.
+- Display timeout and auto-lock checks in `loop()` with clustered `if (currentState == ... || ...)` for the relevant states.
+- Every state in the `handleNavigation` switch must update `lastActivityMs = millis();` to reset the inactivity timer.
+- Agents: `firmware-engineer`.
+
+### Settings Sub-Menu Navigation Pattern
+- CANCEL cycles through option indices (e.g., `settingsSubIdx = (settingsSubIdx + 1) % COUNT`), CONFIRM saves value via `settings_set_*()` and returns to parent menu state.
+- Show current saved value alongside the tentative selection for clarity.
+- Contrast adjustment: CANCEL decreases by step (wraps at min→max), CONFIRM increases (wraps max→min). Live update via `display.ssd1306_command(SSD1306_SETCONTRAST)`. Auto-save on 5-second inactivity timeout in `loop()`.
+- PIN change flow: 3-phase state machine (old → new → confirm), reuses `pin_verify()` and `pin_change()` from `pin_manager`, `memcmp` for new/confirm comparison, zero sensitive buffers via `memset` after each phase.
+- Agents: `firmware-engineer`.
