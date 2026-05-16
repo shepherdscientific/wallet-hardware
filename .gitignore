@@ -26,3 +26,4 @@ scripts/*/
 opencode.json
 .env.*
 
+.aider*
