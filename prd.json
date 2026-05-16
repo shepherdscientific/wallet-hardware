@@ -261,7 +261,7 @@
         "Signing completes in < 3 s per input"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "BIP341 sighash requires SHA256 with tag 'TapSighash'. Pre-compute tagged hash prefix. Schnorr signing in SE051C2 requires the key to be an ECC P-256 key or custom BIP340 implementation — verify SE051C2 supports secp256k1 or add software Schnorr on top of SE ECDSA."
     },
     {

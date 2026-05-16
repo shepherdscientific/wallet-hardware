@@ -134,3 +134,12 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 - Navigation pattern: CONFIRM pushes QR_DISPLAY state, CANCEL pops back to text view — same as SIGN_TX.
 - "Address too long" fallback when even version 4 (max 33x33 on 128x64) can't fit the address.
 - Host-based testing: compile with `g++ -I. qrcode.c qr_renderer.cpp test_qr_renderer.cpp` — no Arduino dependencies needed.
+
+### PSBT Signing (BIP143/BIP341)
+- `sighash_bip143()`: hashPrevouts/hashSequence/hashOutputs as SHA256d, scriptCode for P2WPKH = 0x1976a914 + pubkey_hash(20) + 0x88ac. Construct sigMsg: version || hashPrevouts || hashSequence || outpoint || scriptCode || amount || nSequence || hashOutputs || locktime || sighash_type, then SHA256d.
+- `sighash_bip341()`: uses single SHA256 for sha_prevouts/amounts/scriptpubkeys/sequences/outputs preimages. Construct sigMsg: hash_type(0x00) || version || locktime || sha_prevouts || sha_amounts || sha_scriptpubkeys || sha_sequences || sha_outputs || spend_type(0x00) || input_index. Then tagged_hash("TapSighash", sigMsg).
+- ECDSA signing: SE returns DER-encoded signature; appended sighash byte (e.g., 0x01 for SIGHASH_ALL). Store in PSBT_IN_PARTIAL_SIG (0x02) with key=pubkey.
+- Schnorr signing: SE returns raw 64-byte signature. Store in PSBT_IN_TAP_KEY_SIG (0x13).
+- SE temp key pattern: derive child → store as PSBT_TEMP_KEY_ID (0xF0) → sign → delete temp → on ANY error, flush ALL signatures to prevent partial PSBT.
+- PSBT v0 builder: unsigned TX KV wraps TX content INLINE (not pre-buffer reference): magic || varint(key_len=1) || key_type(0x00) || varint(tx_len) || unsigned_tx_bytes || separator(0x00) || input_maps || separator || output_maps || separator.
+- Key derivation: read master key from SE (0x01) + chain code (0x02), walk path with hd_ckd_priv(). All-hardened paths avoid EC scalarmult bug. Non-hardened paths affected by known EC doubling parity issue for large scalars.

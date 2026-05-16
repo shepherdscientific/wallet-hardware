@@ -1,5 +1,25 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-012 — PSBT Signing via SE051C2 (ECDSA + Schnorr)
+- Created `psbt_signer.h/cpp`: BIP143 sighash (P2WPKH) and BIP341 sighash (P2TR key-path) computation
+- `sighash_bip143(psbt, input_idx, sighash_type, hash_out)`: SHA256d of serialized BIP143 signing data
+- `sighash_bip341(psbt, input_idx, hash_out)`: tagged SHA256("TapSighash" || sigMsg) per BIP341
+- `psbt_sign(psbt)`: iterates all inputs, derives child key from BIP32 path via SE, computes sighash, signs via SE (ECDSA or Schnorr), populates partial_sig or tap_key_sig in PSBT
+- Error handling: `se051_delete_key(PSBT_TEMP_KEY_ID)` on success, full signature flush on any failure (no partial PSBT returned)
+- ECDSA signatures stored as DER (from SE) + appended sighash byte; Schnorr signatures as raw 64-byte
+- Added `tx_version` to psbt_t; parsed from unsigned TX (v0) and PSBT_GLOBAL_TX_VERSION (v2)
+- Added `partial_sig` and `tap_key_sig` fields to psbt_input_t; parser handles PSBT_IN_PARTIAL_SIG (0x02) and PSBT_IN_TAP_KEY_SIG (0x13)
+- Updated `wallet1.ino`: executeSigningSequence() calls psbt_sign(), added TX_SIGN_ERROR state with inverted error display
+- 12 unit tests: BIP143 sighash, BIP341 sighash, psbt_sign integration (signed/unsigned/error), NULL rejection, fee-dependent hash divergence
+- Tests compile with `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp wallet_storage.cpp psbt_signer.cpp test_psbt_signer.cpp`
+
+Patterns discovered:
+- PSBT v0 builder pattern: magic → varint(key_len) → key_type → varint(val_len) → unsigned TX bytes → separator(0x00) → input KVs → separator → output KVs → separator. The unsigned TX KV must wrap the TX content inline (not reference a pre-written buffer)
+- BIP143 sighash must compute hashPrevouts and hashSequence as SHA256d (double-SHA256), while BIP341 uses single SHA256 for its preimage hashes
+- BIP341 sigMsg layout: hash_type(1) || nVersion(4) || nLockTime(4) || sha_prevouts(32) || sha_amounts(32) || sha_scriptpubkeys(32) || sha_sequences(32) || sha_outputs(32) || spend_type(1) || input_index(4)
+- SE temp key pattern: derive child key → store as temp (0xF0) → sign → delete temp — ensures key material lifespan is minimized
+- All-hardened BIP32 paths avoid EC scalar multiplication bug (HMAC-SHA512 only); mixed hardened/non-hardened affected by known EC doubling parity bug
+
 ### 2026-05-16: US-002 — True-Random BIP39 Seed Generation via SE TRNG
 - Created `sha256.h/cpp`: self-contained SHA-256 implementation with FIPS 180-4 test vectors
 - Created `bip39.h/cpp`: BIP39 mnemonic generation using se051_get_random() for 256-bit entropy
