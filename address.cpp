@@ -56,6 +56,12 @@ static bool gen_p2tr(const uint8_t pubkey[33], char out[MAX_ADDRESS_LEN]) {
 bool address_generate(address_type_t type, uint32_t index,
                       char addr_out[MAX_ADDRESS_LEN]) {
   if (!addr_out) return false;
+  return address_generate_with_path(type, 0, index, addr_out);
+}
+
+bool address_generate_with_path(address_type_t type, uint32_t change,
+                                uint32_t index, char addr_out[MAX_ADDRESS_LEN]) {
+  if (!addr_out) return false;
 
   hd_path_t path;
   switch (type) {
@@ -66,7 +72,7 @@ bool address_generate(address_type_t type, uint32_t index,
   }
   path.path[1] = (0 | HD_HARDENED);
   path.path[2] = (0 | HD_HARDENED);
-  path.path[3] = 0;
+  path.path[3] = change;
   path.path[4] = index;
 
   uint8_t pubkey[BIP32_PUBKEY_LEN];

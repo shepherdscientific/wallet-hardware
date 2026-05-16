@@ -10,6 +10,8 @@
 #include "bip39.h"
 #include "address.h"
 #include "qr_renderer.h"
+#include "psbt.h"
+#include "bech32.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -42,6 +44,8 @@ enum WalletState {
   SHOW_ADDRESS,
   QR_DISPLAY,
   SIGN_TX,
+  TX_FEE_REVIEW,
+  TX_OUTPUT_REVIEW,
   PQC_STATUS,
   TX_SUCCESS,
   WALLET_WIPED
@@ -95,6 +99,23 @@ uint8_t qrBuffer[QR_MAX_BUFFER_SIZE];
 QRCode qrCode;
 bool qrValid = false;
 
+// --- TRANSACTION REVIEW STATE ---
+psbt_t txReviewPsbt;
+uint32_t txReviewOutputIdx;
+uint64_t txTotalInputSats;
+uint64_t txTotalOutputSats;
+int64_t txFeeSats;
+uint32_t txFeeRateSatPerVb;
+bool txHasRBF;
+bool txHighFee;
+uint32_t txNonChangeOutputCount;
+uint32_t txNonChangeIndices[PSBT_MAX_OUTPUTS];
+char txReviewAddressBuf[MAX_ADDRESS_LEN];
+bool txReviewReady;
+
+const char *const TX_SEND_LABEL = "SEND";
+const char *const TX_CHANGE_LABEL = "CHANGE";
+
 // --- DEVICE UID (ESP32) ---
 void pin_get_device_uid(uint8_t uid[8]) {
   uint64_t mac = ESP.getEfuseMac();
@@ -102,6 +123,160 @@ void pin_get_device_uid(uint8_t uid[8]) {
   for (int i = 0; i < 6; i++) {
     uid[6 - i] = (mac >> (i * 8)) & 0xFF;
   }
+}
+
+// --- TRANSACTION REVIEW DEMO PSBT ---
+// 1 input (100M sats) → 2 outputs (51.2M send + 48.75M change), fee=50K sats, RBF enabled
+static const uint8_t DEMO_PSBT[] = {
+  0x70, 0x73, 0x62, 0x74, 0xff, 0x01, 0x00, 0x71, 0x01, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+  0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
+  0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0xfd, 0xff, 0xff, 0xff, 0x02, 0x00, 0x40, 0x0d, 0x03, 0x00,
+  0x00, 0x00, 0x00, 0x16, 0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+  0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12,
+  0x13, 0x14, 0xb0, 0xdd, 0xe7, 0x02, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00,
+  0x14, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b,
+  0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x01, 0x01, 0x1f, 0x00, 0xe1, 0xf5, 0x05, 0x00, 0x00, 0x00,
+  0x00, 0x16, 0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+  0x01, 0x03, 0x04, 0x01, 0x00, 0x00, 0x00, 0x19, 0x06, 0xaa, 0xbb, 0xcc,
+  0xdd, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
+  0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x02, 0x10,
+  0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+  0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+  0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x00, 0x19, 0x02, 0xaa, 0xbb,
+  0xcc, 0xdd, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00,
+  0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x02,
+  0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+  0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+  0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x00, 0x19, 0x02, 0xaa,
+  0xbb, 0xcc, 0xdd, 0x54, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x80, 0x00,
+  0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+  0x02, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a,
+  0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
+  0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x00
+};
+static const size_t DEMO_PSBT_LEN = sizeof(DEMO_PSBT);
+
+// --- TRANSACTION REVIEW HELPERS ---
+
+void format_btc(uint64_t sats, char *buf, size_t buf_len) {
+  uint64_t btc = sats / 100000000ULL;
+  uint64_t frac = sats % 100000000ULL;
+  snprintf(buf, buf_len, "%llu.%08llu", (unsigned long long)btc, (unsigned long long)frac);
+}
+
+void format_sats(uint64_t sats, char *buf, size_t buf_len) {
+  if (sats >= 1000000) {
+    snprintf(buf, buf_len, "%llu,%03llu,%03llu",
+             (unsigned long long)(sats / 1000000),
+             (unsigned long long)((sats / 1000) % 1000),
+             (unsigned long long)(sats % 1000));
+  } else if (sats >= 1000) {
+    snprintf(buf, buf_len, "%llu,%03llu",
+             (unsigned long long)(sats / 1000),
+             (unsigned long long)(sats % 1000));
+  } else {
+    snprintf(buf, buf_len, "%llu", (unsigned long long)sats);
+  }
+}
+
+bool is_output_change(const psbt_output_t *output) {
+  if (!output->bip32_derivation.present) return false;
+  if (output->bip32_derivation.path_len < 5) return false;
+  return output->bip32_derivation.path[3] == 1;
+}
+
+bool tx_detect_rbf(const psbt_t *psbt) {
+  for (uint32_t i = 0; i < psbt->input_count; i++) {
+    if (psbt->inputs[i].sequence < 0xFFFFFFFE) return true;
+  }
+  return false;
+}
+
+uint32_t tx_estimate_vsize(const psbt_t *psbt) {
+  uint32_t base_size = 10 + psbt->input_count * 41 + psbt->output_count * 31;
+  uint32_t witness_size = psbt->input_count * 107;
+  return (base_size * 4 + witness_size + 3) / 4;
+}
+
+void build_output_address(const psbt_output_t *output, char *out, size_t out_len) {
+  if (output->bip32_derivation.present && output->bip32_derivation.path_len >= 5) {
+    uint32_t purpose = output->bip32_derivation.path[0];
+    uint32_t change = output->bip32_derivation.path[3];
+    uint32_t addr_idx = output->bip32_derivation.path[4];
+    address_type_t atype;
+    if (purpose == 0x80000054) atype = ADDRESS_P2WPKH;
+    else if (purpose == 0x8000002C) atype = ADDRESS_P2PKH;
+    else if (purpose == 0x80000056) atype = ADDRESS_P2TR;
+    else { atype = ADDRESS_P2WPKH; }
+    address_generate_with_path(atype, change, addr_idx, out);
+    return;
+  }
+  if (output->script_pubkey_len == 22 &&
+      output->script_pubkey[0] == 0x00 && output->script_pubkey[1] == 0x14) {
+    char bech[128];
+    if (bech32_encode("bc", 0, output->script_pubkey + 2, 20, bech)) {
+      strncpy(out, bech, out_len);
+      return;
+    }
+  }
+  if (output->script_pubkey_len == 34 &&
+      output->script_pubkey[0] == 0x51 && output->script_pubkey[1] == 0x20) {
+    char bech[128];
+    if (bech32m_encode("bc", 1, output->script_pubkey + 2, 32, bech)) {
+      strncpy(out, bech, out_len);
+      return;
+    }
+  }
+  snprintf(out, out_len, "hex:%.4x...", (unsigned)output->script_pubkey[2]);
+}
+
+void initTransactionReview() {
+  memset(&txReviewPsbt, 0, sizeof(txReviewPsbt));
+  txReviewOutputIdx = 0;
+  txTotalInputSats = 0;
+  txTotalOutputSats = 0;
+  txFeeSats = 0;
+  txFeeRateSatPerVb = 0;
+  txHasRBF = false;
+  txHighFee = false;
+  txNonChangeOutputCount = 0;
+  memset(txNonChangeIndices, 0, sizeof(txNonChangeIndices));
+  memset(txReviewAddressBuf, 0, sizeof(txReviewAddressBuf));
+  txReviewReady = false;
+
+  psbt_err_t err = psbt_parse(DEMO_PSBT, DEMO_PSBT_LEN, &txReviewPsbt);
+  if (err != PSBT_OK) {
+    txReviewReady = false;
+    return;
+  }
+
+  txTotalInputSats = psbt_get_total_input_value(&txReviewPsbt);
+  txTotalOutputSats = psbt_get_total_output_value(&txReviewPsbt);
+  txFeeSats = psbt_get_fee(&txReviewPsbt);
+  if (txFeeSats < 0) txFeeSats = 0;
+
+  uint32_t vsize = tx_estimate_vsize(&txReviewPsbt);
+  if (vsize > 0) {
+    txFeeRateSatPerVb = (uint32_t)((uint64_t)txFeeSats / vsize);
+  }
+
+  txHasRBF = tx_detect_rbf(&txReviewPsbt);
+  txHighFee = (txFeeRateSatPerVb > 500);
+
+  for (uint32_t i = 0; i < txReviewPsbt.output_count; i++) {
+    if (!is_output_change(&txReviewPsbt.outputs[i])) {
+      if (txNonChangeOutputCount < PSBT_MAX_OUTPUTS) {
+        txNonChangeIndices[txNonChangeOutputCount] = i;
+      }
+      txNonChangeOutputCount++;
+    }
+  }
+
+  txReviewReady = true;
 }
 
 void setup() {
@@ -425,6 +600,40 @@ void handleNavigation() {
       if (cancelPressed) {
         currentState = MAIN_MENU;
       } else if (confirmPressed) {
+        initTransactionReview();
+        if (txReviewReady) {
+          currentState = TX_FEE_REVIEW;
+        } else {
+          currentState = MAIN_MENU;
+        }
+      }
+      break;
+
+    case TX_FEE_REVIEW:
+      if (cancelPressed) {
+        currentState = MAIN_MENU;
+      } else if (confirmPressed) {
+        if (txNonChangeOutputCount > 0) {
+          txReviewOutputIdx = 0;
+          build_output_address(&txReviewPsbt.outputs[txNonChangeIndices[0]],
+                               txReviewAddressBuf, sizeof(txReviewAddressBuf));
+          currentState = TX_OUTPUT_REVIEW;
+        } else {
+          initTransactionReview();
+        }
+      }
+      break;
+
+    case TX_OUTPUT_REVIEW:
+      if (cancelPressed) {
+        txReviewOutputIdx++;
+        if (txReviewOutputIdx >= txNonChangeOutputCount) {
+          currentState = MAIN_MENU;
+        } else {
+          build_output_address(&txReviewPsbt.outputs[txNonChangeIndices[txReviewOutputIdx]],
+                               txReviewAddressBuf, sizeof(txReviewAddressBuf));
+        }
+      } else if (confirmPressed) {
         executeSigningSequence();
       }
       break;
@@ -736,11 +945,96 @@ void renderCurrentState() {
       display.println("  CONFIRM TRANSACTION  ");
       display.setTextColor(SSD1306_WHITE);
       display.println("---------------------");
-      display.print("OUT: "); display.println("0.05120000 BTC");
-      display.print("FEE: "); display.println("14500 Sats (22 vB)");
-      display.print("TO : "); display.println("bc1q9w...x83p");
+      display.println("Ready to sign");
+      display.println("a PSBT transaction");
+      display.setCursor(0, 36);
+      display.println("Review details");
+      display.println("before signing.");
+      display.setCursor(0, 56);
+      display.print("[CANCEL=no]  [CONFIRM=yes]");
+      break;
+
+    case TX_FEE_REVIEW:
+      display.setCursor(0, 0);
+      display.println("REVIEW TRANSACTION");
       display.println("---------------------");
-      display.print("[REJECT]       [SIGN]");
+      display.setCursor(0, 18);
+      {
+        char btc_buf[32];
+        uint64_t send_amt = txTotalOutputSats;
+        for (uint32_t i = 0; i < txReviewPsbt.output_count; i++) {
+          if (is_output_change(&txReviewPsbt.outputs[i]))
+            send_amt -= txReviewPsbt.outputs[i].amount;
+        }
+        format_btc(send_amt, btc_buf, sizeof(btc_buf));
+        display.print("Sending: ");
+        display.println(btc_buf);
+      }
+      display.setCursor(0, 30);
+      {
+        char fee_buf[32];
+        format_sats((uint64_t)txFeeSats, fee_buf, sizeof(fee_buf));
+        display.print("Fee: ");
+        display.print(fee_buf);
+        display.println(" sats");
+      }
+      display.setCursor(0, 42);
+      display.print("Rate: ");
+      display.print(txFeeRateSatPerVb);
+      display.print(" sat/vB  ");
+      if (txHasRBF) {
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print("RBF:ON");
+      } else {
+        display.print("RBF:OFF");
+      }
+      display.setTextColor(SSD1306_WHITE);
+      if (txHighFee) {
+        display.setCursor(0, 52);
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print("HIGH FEE - Confirm?");
+        display.setTextColor(SSD1306_WHITE);
+      }
+      display.setCursor(0, 56);
+      display.print("CANCEL=cancel CONFIRM=ok");
+      break;
+
+    case TX_OUTPUT_REVIEW:
+      display.setCursor(0, 0);
+      {
+        uint32_t actual_idx = txNonChangeIndices[txReviewOutputIdx];
+        bool is_change = is_output_change(&txReviewPsbt.outputs[actual_idx]);
+        if (is_change) {
+          display.println("CHANGE to You");
+        } else {
+          display.print("SEND  Output ");
+          display.print(txReviewOutputIdx + 1);
+          display.print("/");
+          display.println(txNonChangeOutputCount);
+        }
+      }
+      display.println("---------------------");
+      {
+        uint32_t actual_idx = txNonChangeIndices[txReviewOutputIdx];
+        uint64_t amt = txReviewPsbt.outputs[actual_idx].amount;
+        char btc_buf[32];
+        format_btc(amt, btc_buf, sizeof(btc_buf));
+        display.setCursor(0, 18);
+        display.setTextSize(2);
+        display.println(btc_buf);
+        display.setTextSize(1);
+        display.setCursor(0, 36);
+        display.print("to: ");
+        display.println(txReviewAddressBuf);
+      }
+      {
+        bool is_last = (txReviewOutputIdx + 1 >= txNonChangeOutputCount);
+        display.setCursor(0, 56);
+        if (is_last)
+          display.print("CANCEL=menu CONFIRM=sign");
+        else
+          display.print("CANCEL=next CONFIRM=sign");
+      }
       break;
 
     case PQC_STATUS:
