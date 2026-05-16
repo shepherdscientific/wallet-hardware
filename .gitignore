@@ -23,3 +23,6 @@ Thumbs.db
 # Don't track your private WiFi passwords or API keys
 secrets.h
 
+
+!scripts/**
+
