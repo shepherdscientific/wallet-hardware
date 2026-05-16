@@ -59,7 +59,8 @@ enum WalletState {
   WALLET_WIPED,
   VERIFY_ADDRESS,
   VERIFY_MATCH,
-  VERIFY_MISMATCH
+  VERIFY_MISMATCH,
+  DEVICE_ID_DISPLAY
 };
 WalletState currentState = PIN_SETUP;
 
@@ -147,6 +148,10 @@ bool txReviewReady;
 int txSignCount = 0;
 int txSignError = 0;
 bool psbtFromUsb = false;
+
+// --- ANTI-PHISHING DEVICE ID ---
+char antiPhishWords[4][9] = {{0}};
+unsigned long deviceIdEnteredMs = 0;
 
 const char *const TX_SEND_LABEL = "SEND";
 const char *const TX_CHANGE_LABEL = "CHANGE";
@@ -394,6 +399,11 @@ void loop() {
     }
   }
 
+  if (currentState == DEVICE_ID_DISPLAY &&
+      (millis() - deviceIdEnteredMs > 3000)) {
+    currentState = MAIN_MENU;
+  }
+
   if ((currentState == MNEMONIC_DISPLAY || currentState == MNEMONIC_VERIFY) &&
       displayOn && (millis() - lastActivityMs > 30000)) {
     displayOn = false;
@@ -413,6 +423,22 @@ void loop() {
   handleNavigation();
   renderCurrentState();
   delay(30);
+}
+
+void enterDeviceIdDisplay() {
+  if (wallet_has_anti_phish()) {
+    wallet_get_anti_phish(antiPhishWords);
+  } else {
+    wallet_generate_anti_phish();
+    wallet_get_anti_phish(antiPhishWords);
+    char pairingBuf[48];
+    snprintf(pairingBuf, sizeof(pairingBuf), "%s %s %s %s",
+             antiPhishWords[0], antiPhishWords[1],
+             antiPhishWords[2], antiPhishWords[3]);
+    serial_send_pairing(pairingBuf);
+  }
+  deviceIdEnteredMs = millis();
+  currentState = DEVICE_ID_DISPLAY;
 }
 
 // --- UNIVERSAL 2-BUTTON NAVIGATION ENGINE ---
@@ -486,7 +512,7 @@ void handleNavigation() {
           if (pin_setup(pinDigits)) {
             pin_reset_attempts();
             pinAttempts = 0;
-            currentState = MAIN_MENU;
+            enterDeviceIdDisplay();
           }
         }
       }
@@ -507,7 +533,7 @@ void handleNavigation() {
               initSessionPassphraseEntry();
               currentState = BOOT_PASSPHRASE;
             } else {
-              currentState = MAIN_MENU;
+              enterDeviceIdDisplay();
             }
           } else {
             pin_increment_attempts();
@@ -692,7 +718,7 @@ void handleNavigation() {
           strncpy(sessionPassphrase, passphrase, sizeof(sessionPassphrase) - 1);
           sessionPassphrase[sizeof(sessionPassphrase) - 1] = '\0';
           secureZeroPassphrase();
-          currentState = MAIN_MENU;
+          enterDeviceIdDisplay();
         } else if (passphraseLen < 64) {
           passphrase[passphraseLen] = PASSPHRASE_CHARS[passphraseCharIdx];
           passphraseLen++;
@@ -836,6 +862,12 @@ void handleNavigation() {
     case VERIFY_MISMATCH:
       if (confirmPressed || cancelPressed) {
         serial_send_mismatch();
+        currentState = MAIN_MENU;
+      }
+      break;
+
+    case DEVICE_ID_DISPLAY:
+      if (confirmPressed || cancelPressed) {
         currentState = MAIN_MENU;
       }
       break;
@@ -1429,6 +1461,24 @@ void renderCurrentState() {
       display.print("Any button to return");
       break;
     }
+
+    case DEVICE_ID_DISPLAY:
+      display.setCursor(0, 0);
+      display.println("COINCUBE DEVICE ID");
+      display.println("---------------------");
+      display.setCursor(0, 20);
+      display.print(antiPhishWords[0]);
+      display.print("  ");
+      display.println(antiPhishWords[1]);
+      display.setCursor(0, 32);
+      display.print(antiPhishWords[2]);
+      display.print("  ");
+      display.println(antiPhishWords[3]);
+      display.setCursor(0, 48);
+      display.println("Match companion app");
+      display.setCursor(0, 56);
+      display.print("Any button to continue");
+      break;
   }
   display.display();
 }

@@ -92,6 +92,16 @@ void serial_send_mismatch(void) {
 #endif
 }
 
+void serial_send_pairing(const char *words) {
+    if (!words) return;
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.print("PAIRING:");
+    SERIAL_PORT.println(words);
+#else
+    printf("PAIRING:%s\n", words);
+#endif
+}
+
 static serial_msg_t parse_line(const char *line, size_t line_len) {
     serial_msg_t msg;
     memset(&msg, 0, sizeof(msg));
@@ -112,6 +122,14 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
             msg.data[addr_len] = '\0';
             msg.cmd = SERIAL_CMD_VERIFY;
             msg.data_len = addr_len;
+        }
+    } else if (strncmp(line, "PAIRING:", 8) == 0) {
+        size_t words_len = line_len - 8;
+        if (words_len < sizeof(msg.data)) {
+            memcpy(msg.data, line + 8, words_len);
+            msg.data[words_len] = '\0';
+            msg.cmd = SERIAL_CMD_PAIRING;
+            msg.data_len = words_len;
         }
     }
 

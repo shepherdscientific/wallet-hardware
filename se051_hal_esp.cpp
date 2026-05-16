@@ -247,8 +247,17 @@ se051_err_t se051_selftest(void) {
 se051_err_t se051_read_object(uint8_t obj_id,
                               uint8_t *buf, size_t buf_len,
                               size_t *out_len) {
-  (void)obj_id; (void)buf; (void)buf_len; (void)out_len;
-  return SE_ERR_COMM;
+  if (!buf || buf_len == 0 || !out_len) return SE_ERR_PARAM;
+  if (!g_se051_ready) return SE_ERR_COMM;
+
+  uint8_t apdu[] = { APDU_CLA, APDU_INS_GET_DATA, 0x00, obj_id, 0x00 };
+  se051_err_t err = i2c_xfer(SE051_I2C_ADDR, apdu, sizeof(apdu), buf, buf_len);
+  if (err == SE_OK) {
+    *out_len = buf_len;
+  } else {
+    *out_len = 0;
+  }
+  return err;
 }
 
 #endif // USE_SE051

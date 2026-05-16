@@ -19,6 +19,12 @@ bool wallet_has_passphrase(void);
 
 bool wallet_set_passphrase_flag(bool has);
 
+bool wallet_generate_anti_phish(void);
+
+bool wallet_has_anti_phish(void);
+
+bool wallet_get_anti_phish(char words[4][BIP39_WORD_MAX_LEN]);
+
 #ifdef __cplusplus
 }
 #endif

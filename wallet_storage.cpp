@@ -147,3 +147,53 @@ bool wallet_set_passphrase_flag(bool has) {
   uint8_t flag = has ? 1 : 0;
   return se051_store_key(SE051_OBJ_HAS_PASSPHRASE, &flag, 1) == SE_OK;
 }
+
+bool wallet_generate_anti_phish(void) {
+  uint8_t rnd[8] = {0};
+
+  se051_err_t err = se051_get_random(rnd, sizeof(rnd));
+  if (err != SE_OK) return false;
+
+  uint16_t indices[4];
+  for (int i = 0; i < 4; i++) {
+    indices[i] = ((uint16_t)rnd[i * 2] << 8) | rnd[i * 2 + 1];
+    indices[i] = indices[i] % BIP39_WORDLIST_SIZE;
+  }
+
+  secure_zero(rnd, sizeof(rnd));
+
+  err = se051_store_key(SE051_OBJ_ANTI_PHISH,
+                        (const uint8_t *)indices,
+                        sizeof(indices));
+  secure_zero(indices, sizeof(indices));
+
+  return err == SE_OK;
+}
+
+bool wallet_has_anti_phish(void) {
+  uint8_t dummy[8];
+  size_t out_len = 0;
+  return se051_read_object(SE051_OBJ_ANTI_PHISH, dummy, sizeof(dummy),
+                           &out_len) == SE_OK && out_len == 8;
+}
+
+bool wallet_get_anti_phish(char words[4][BIP39_WORD_MAX_LEN]) {
+  if (!words) return false;
+
+  uint8_t buf[8] = {0};
+  size_t out_len = 0;
+
+  se051_err_t err = se051_read_object(SE051_OBJ_ANTI_PHISH, buf, sizeof(buf),
+                                      &out_len);
+  if (err != SE_OK || out_len != 8) return false;
+
+  for (int i = 0; i < 4; i++) {
+    uint16_t idx = ((uint16_t)buf[i * 2] << 8) | buf[i * 2 + 1];
+    idx = idx % BIP39_WORDLIST_SIZE;
+    strncpy(words[i], bip39_wordlist[idx], BIP39_WORD_MAX_LEN - 1);
+    words[i][BIP39_WORD_MAX_LEN - 1] = '\0';
+  }
+
+  secure_zero(buf, sizeof(buf));
+  return true;
+}
