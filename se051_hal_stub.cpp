@@ -3,6 +3,7 @@
 #include "se051_hal.h"
 #include <string.h>
 #include <stdlib.h>
+#include <cstdio>
 
 static uint8_t g_initialized = 0;
 static uint32_t g_rand_seed = 0xDEADBEEF;
@@ -135,6 +136,13 @@ se051_err_t se051_read_object(uint8_t obj_id,
 
 se051_err_t se051_selftest(void) {
   if (!g_initialized) return SE_ERR_COMM;
+  return SE_OK;
+}
+
+se051_err_t se051_get_serial(char *buf, size_t buf_len) {
+  if (!buf || buf_len == 0) return SE_ERR_PARAM;
+  if (!g_initialized) return SE_ERR_COMM;
+  snprintf(buf, buf_len, "SE051-00000001");
   return SE_OK;
 }
 

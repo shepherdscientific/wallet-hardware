@@ -76,6 +76,8 @@ se051_err_t se051_get_pubkey(uint8_t key_id,
 
 se051_err_t se051_selftest(void);
 
+se051_err_t se051_get_serial(char *buf, size_t buf_len);
+
 se051_err_t se051_read_object(uint8_t obj_id,
                               uint8_t *buf, size_t buf_len,
                               size_t *out_len);

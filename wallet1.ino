@@ -17,6 +17,7 @@
 #include "serial_transport.h"
 #include "base64.h"
 #include "account_manager.h"
+#include "settings.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -65,12 +66,21 @@ enum WalletState {
   DEVICE_ID_DISPLAY,
   ACCOUNT_SELECT,
   ACCOUNT_RENAME,
-  COIN_CONTROL
+  COIN_CONTROL,
+  SETTINGS_MENU,
+  SETTINGS_TIMEOUT,
+  SETTINGS_AUTOLOCK,
+  SETTINGS_CONTRAST,
+  SETTINGS_CHANGE_PIN_OLD,
+  SETTINGS_CHANGE_PIN_NEW,
+  SETTINGS_CHANGE_PIN_CONFIRM,
+  SETTINGS_PIN_MISMATCH,
+  SETTINGS_ABOUT
 };
 WalletState currentState = PIN_SETUP;
 
 int menuIndex = 0;
-const int TOTAL_MENU_ITEMS = 7;
+const int TOTAL_MENU_ITEMS = 8;
 const char* menuItems[] = {
   "1. View Balance",
   "2. Receive (Addr)",
@@ -78,7 +88,8 @@ const char* menuItems[] = {
   "4. PQC Quantum Sec",
   "5. Demo Sign (PSBT)",
   "6. Verify Address",
-  "7. Account"
+  "7. Account",
+  "8. Settings"
 };
 
 // --- PIN STATE ---
@@ -174,6 +185,25 @@ bool psbtFromUsb = false;
 bool txInputSelected[PSBT_MAX_INPUTS];
 uint8_t coinControlScrollIdx;
 uint8_t coinControlOwnedCount;
+
+// --- SETTINGS STATE ---
+uint8_t settingsMenuIdx = 0;
+const int SETTINGS_ITEM_COUNT = 5;
+const char* settingsItems[] = {
+  "Display Timeout",
+  "Auto-Lock Timeout",
+  "Display Contrast",
+  "Change PIN",
+  "About"
+};
+uint8_t settingsSubIdx = 0;
+uint8_t settingsContrastVal = 128;
+// --- CHANGE PIN STATE ---
+uint8_t changePinOldDigits[6] = {0};
+uint8_t changePinNewDigits[6] = {0};
+uint8_t changePinConfirmDigits[6] = {0};
+uint8_t changePinPosition = 0;
+uint8_t changePinDigitValue = 0;
 
 // --- ANTI-PHISHING DEVICE ID ---
 char antiPhishWords[4][9] = {{0}};
@@ -391,6 +421,10 @@ void setup() {
 
   account_init();
 
+  settings_init();
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(settings_get_contrast());
+
   if (pin_is_set()) {
     currentState = PIN_ENTRY;
     pinAttempts = pin_get_attempts();
@@ -443,6 +477,11 @@ void loop() {
     }
   }
 
+  if ((currentState == MNEMONIC_DISPLAY || currentState == MNEMONIC_VERIFY) &&
+      (millis() - lastActivityMs > 30000)) {
+    displayOn = false;
+  }
+
   if (currentState == DEVICE_ID_DISPLAY &&
       (millis() - deviceIdEnteredMs > 3000)) {
     currentState = MAIN_MENU;
@@ -467,6 +506,42 @@ void loop() {
     restoreLetter = 'a';
     restoreMatchPos = 0;
     currentState = BOOT_MENU;
+  }
+
+  if (currentState == MAIN_MENU ||
+      currentState == SHOW_BALANCE ||
+      currentState == SHOW_ADDRESS ||
+      currentState == QR_DISPLAY ||
+      currentState == PQC_STATUS ||
+      currentState == MNEMONIC_DISPLAY ||
+      currentState == MNEMONIC_VERIFY ||
+      currentState == SETTINGS_MENU ||
+      currentState == SETTINGS_TIMEOUT ||
+      currentState == SETTINGS_AUTOLOCK ||
+      currentState == SETTINGS_CONTRAST ||
+      currentState == SETTINGS_ABOUT) {
+    uint32_t auto_lock_ms = settings_auto_lock_ms(settings_get_auto_lock());
+    if (auto_lock_ms > 0 &&
+        millis() - lastActivityMs > auto_lock_ms) {
+      currentState = PIN_ENTRY;
+      pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+      pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+      pinPosition = 0;
+      pinDigitValue = 0;
+      pinAttempts = pin_get_attempts();
+    }
+
+    uint32_t disp_ms = settings_disp_timeout_ms(settings_get_display_timeout());
+    if (disp_ms > 0 && displayOn &&
+        millis() - lastActivityMs > disp_ms) {
+      displayOn = false;
+    }
+  }
+
+  if (currentState == SETTINGS_CONTRAST &&
+      millis() - lastActivityMs > 5000) {
+    settings_set_contrast(settingsContrastVal);
+    currentState = SETTINGS_MENU;
   }
 
   handleNavigation();
@@ -503,6 +578,12 @@ void handleNavigation() {
 
   if (!confirmPressed && !cancelPressed) return;
 
+  if (!displayOn) {
+    displayOn = true;
+    lastActivityMs = millis();
+    return;
+  }
+
   delay(180);
 
   switch (currentState) {
@@ -519,10 +600,7 @@ void handleNavigation() {
       break;
 
     case MNEMONIC_DISPLAY:
-      if (confirmPressed || cancelPressed) {
-        lastActivityMs = millis();
-        displayOn = true;
-      }
+      lastActivityMs = millis();
       if (confirmPressed && mnemonicWordIndex == 23) {
         startVerification();
       } else if (cancelPressed) {
@@ -820,6 +898,10 @@ void handleNavigation() {
           activeAccount = account_get_active();
           currentState = ACCOUNT_SELECT;
         }
+        if (menuIndex == 7) {
+          settingsMenuIdx = 0;
+          currentState = SETTINGS_MENU;
+        }
       }
       break;
 
@@ -988,6 +1070,146 @@ void handleNavigation() {
       }
       break;
 
+    case SETTINGS_MENU:
+      lastActivityMs = millis();
+      displayOn = true;
+      if (cancelPressed) {
+        settingsMenuIdx = (settingsMenuIdx + 1) % SETTINGS_ITEM_COUNT;
+      } else if (confirmPressed) {
+        if (settingsMenuIdx == 0) {
+          settingsSubIdx = settings_get_display_timeout();
+          currentState = SETTINGS_TIMEOUT;
+        } else if (settingsMenuIdx == 1) {
+          settingsSubIdx = settings_get_auto_lock();
+          currentState = SETTINGS_AUTOLOCK;
+        } else if (settingsMenuIdx == 2) {
+          settingsContrastVal = settings_get_contrast();
+          currentState = SETTINGS_CONTRAST;
+        } else if (settingsMenuIdx == 3) {
+          changePinPosition = 0;
+          changePinDigitValue = 0;
+          memset(changePinOldDigits, 0, sizeof(changePinOldDigits));
+          memset(changePinNewDigits, 0, sizeof(changePinNewDigits));
+          memset(changePinConfirmDigits, 0, sizeof(changePinConfirmDigits));
+          currentState = SETTINGS_CHANGE_PIN_OLD;
+        } else if (settingsMenuIdx == 4) {
+          currentState = SETTINGS_ABOUT;
+        }
+      }
+      break;
+
+    case SETTINGS_TIMEOUT:
+      lastActivityMs = millis();
+      if (cancelPressed) {
+        settingsSubIdx = (settingsSubIdx + 1) % SETTINGS_DISP_TIMEOUT_COUNT;
+      } else if (confirmPressed) {
+        settings_set_display_timeout(settingsSubIdx);
+        currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case SETTINGS_AUTOLOCK:
+      lastActivityMs = millis();
+      if (cancelPressed) {
+        settingsSubIdx = (settingsSubIdx + 1) % SETTINGS_AUTOLOCK_COUNT;
+      } else if (confirmPressed) {
+        settings_set_auto_lock(settingsSubIdx);
+        currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case SETTINGS_CONTRAST:
+      lastActivityMs = millis();
+      if (cancelPressed) {
+        if (settingsContrastVal >= SETTINGS_CONTRAST_STEP) {
+          settingsContrastVal -= SETTINGS_CONTRAST_STEP;
+        } else {
+          settingsContrastVal = SETTINGS_CONTRAST_MAX;
+        }
+        display.ssd1306_command(SSD1306_SETCONTRAST);
+        display.ssd1306_command(settingsContrastVal);
+      } else if (confirmPressed) {
+        if (settingsContrastVal + SETTINGS_CONTRAST_STEP <= SETTINGS_CONTRAST_MAX) {
+          settingsContrastVal += SETTINGS_CONTRAST_STEP;
+        } else {
+          settingsContrastVal = SETTINGS_CONTRAST_MIN;
+        }
+        display.ssd1306_command(SSD1306_SETCONTRAST);
+        display.ssd1306_command(settingsContrastVal);
+      }
+      break;
+
+    case SETTINGS_CHANGE_PIN_OLD:
+      lastActivityMs = millis();
+      if (confirmPressed) {
+        changePinDigitValue = (changePinDigitValue + 1) % 10;
+      } else if (cancelPressed) {
+        changePinOldDigits[changePinPosition] = changePinDigitValue;
+        changePinPosition++;
+        changePinDigitValue = 0;
+        if (changePinPosition >= 6) {
+          if (pin_verify(changePinOldDigits)) {
+            changePinPosition = 0;
+            changePinDigitValue = 0;
+            currentState = SETTINGS_CHANGE_PIN_NEW;
+          } else {
+            currentState = SETTINGS_MENU;
+          }
+        }
+      }
+      break;
+
+    case SETTINGS_CHANGE_PIN_NEW:
+      lastActivityMs = millis();
+      if (confirmPressed) {
+        changePinDigitValue = (changePinDigitValue + 1) % 10;
+      } else if (cancelPressed) {
+        changePinNewDigits[changePinPosition] = changePinDigitValue;
+        changePinPosition++;
+        changePinDigitValue = 0;
+        if (changePinPosition >= 6) {
+          changePinPosition = 0;
+          changePinDigitValue = 0;
+          currentState = SETTINGS_CHANGE_PIN_CONFIRM;
+        }
+      }
+      break;
+
+    case SETTINGS_CHANGE_PIN_CONFIRM:
+      lastActivityMs = millis();
+      if (confirmPressed) {
+        changePinDigitValue = (changePinDigitValue + 1) % 10;
+      } else if (cancelPressed) {
+        changePinConfirmDigits[changePinPosition] = changePinDigitValue;
+        changePinPosition++;
+        changePinDigitValue = 0;
+        if (changePinPosition >= 6) {
+          if (memcmp(changePinNewDigits, changePinConfirmDigits, 6) == 0) {
+            pin_change(changePinOldDigits, changePinNewDigits);
+            memset(changePinOldDigits, 0, sizeof(changePinOldDigits));
+            memset(changePinNewDigits, 0, sizeof(changePinNewDigits));
+            memset(changePinConfirmDigits, 0, sizeof(changePinConfirmDigits));
+            currentState = SETTINGS_MENU;
+          } else {
+            currentState = SETTINGS_PIN_MISMATCH;
+          }
+        }
+      }
+      break;
+
+    case SETTINGS_PIN_MISMATCH:
+      if (confirmPressed || cancelPressed) {
+        currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case SETTINGS_ABOUT:
+      lastActivityMs = millis();
+      if (confirmPressed || cancelPressed) {
+        currentState = SETTINGS_MENU;
+      }
+      break;
+
     case COIN_CONTROL: {
       uint8_t totalItems = coinControlOwnedCount + 1;
       if (cancelPressed) {
@@ -1022,6 +1244,12 @@ void handleNavigation() {
 
 // --- SCREEN RENDERERS ---
 void renderCurrentState() {
+  if (!displayOn) {
+    display.clearDisplay();
+    display.display();
+    return;
+  }
+
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
@@ -1056,10 +1284,6 @@ void renderCurrentState() {
       break;
 
     case MNEMONIC_DISPLAY:
-      if (!displayOn) {
-        display.display();
-        break;
-      }
       display.setCursor(0, 0);
       display.println("YOUR SEED WORDS");
       display.println("---------------------");
@@ -1082,10 +1306,6 @@ void renderCurrentState() {
       break;
 
     case MNEMONIC_VERIFY:
-      if (!displayOn) {
-        display.display();
-        break;
-      }
       display.setCursor(0, 0);
       display.println("VERIFY SEED");
       display.println("---------------------");
@@ -1752,6 +1972,178 @@ void renderCurrentState() {
       display.print("/6");
       display.setCursor(0, 56);
       display.print("CANCEL=cycle CONFIRM=select");
+      break;
+
+    case SETTINGS_MENU:
+      display.setCursor(0, 0);
+      display.println("SETTINGS");
+      display.println("---------------------");
+      for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
+        display.setCursor(0, 18 + i * 9);
+        if (i == (int)settingsMenuIdx) {
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print("> ");
+          display.print(settingsItems[i]);
+          while (display.getCursorX() < 21 * 6) display.print(" ");
+          display.setTextColor(SSD1306_WHITE);
+        } else {
+          display.print("  ");
+          display.print(settingsItems[i]);
+        }
+      }
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=select");
+      break;
+
+    case SETTINGS_TIMEOUT:
+      display.setCursor(0, 0);
+      display.println("DISPLAY TIMEOUT");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.setTextSize(2);
+      display.println(settings_disp_timeout_label(settingsSubIdx));
+      display.setTextSize(1);
+      display.setCursor(0, 48);
+      display.print("Current: ");
+      display.println(settings_disp_timeout_label(settings_get_display_timeout()));
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=save");
+      break;
+
+    case SETTINGS_AUTOLOCK:
+      display.setCursor(0, 0);
+      display.println("AUTO-LOCK TIMEOUT");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.setTextSize(2);
+      display.println(settings_auto_lock_label(settingsSubIdx));
+      display.setTextSize(1);
+      display.setCursor(0, 48);
+      display.print("Current: ");
+      display.println(settings_auto_lock_label(settings_get_auto_lock()));
+      display.setCursor(0, 56);
+      display.print("CANCEL=cycle CONFIRM=save");
+      break;
+
+    case SETTINGS_CONTRAST:
+      display.setCursor(0, 0);
+      display.println("DISPLAY CONTRAST");
+      display.println("---------------------");
+      display.setCursor(0, 22);
+      display.setTextSize(2);
+      display.print(settingsContrastVal);
+      display.setTextSize(1);
+      display.setCursor(0, 36);
+      int barW = map(settingsContrastVal, 0, 255, 0, 120);
+      display.fillRect(2, 42, 124, 6, SSD1306_BLACK);
+      display.drawRect(2, 42, 124, 6, SSD1306_WHITE);
+      display.fillRect(2, 42, barW, 6, SSD1306_WHITE);
+      display.setCursor(0, 56);
+      display.print("CANCEL= <  CONFIRM= >");
+      break;
+
+    case SETTINGS_CHANGE_PIN_OLD:
+      display.setCursor(0, 0);
+      display.println("CURRENT PIN");
+      display.println("---------------------");
+      display.setCursor(20, 24);
+      for (int i = 0; i < 6; i++) {
+        if (i < changePinPosition) {
+          display.print("*");
+        } else if (i == changePinPosition) {
+          display.print("[");
+          display.print(changePinDigitValue);
+          display.print("]");
+        } else {
+          display.print("_");
+        }
+        if (i < 5) display.print(" ");
+      }
+      display.setCursor(0, 56);
+      display.print("CONFIRM=change CANCEL=next");
+      break;
+
+    case SETTINGS_CHANGE_PIN_NEW:
+      display.setCursor(0, 0);
+      display.println("NEW PIN");
+      display.println("---------------------");
+      display.setCursor(20, 24);
+      for (int i = 0; i < 6; i++) {
+        if (i < changePinPosition) {
+          display.print("*");
+        } else if (i == changePinPosition) {
+          display.print("[");
+          display.print(changePinDigitValue);
+          display.print("]");
+        } else {
+          display.print("_");
+        }
+        if (i < 5) display.print(" ");
+      }
+      display.setCursor(0, 56);
+      display.print("CONFIRM=change CANCEL=next");
+      break;
+
+    case SETTINGS_CHANGE_PIN_CONFIRM:
+      display.setCursor(0, 0);
+      display.println("CONFIRM NEW PIN");
+      display.println("---------------------");
+      display.setCursor(20, 24);
+      for (int i = 0; i < 6; i++) {
+        if (i < changePinPosition) {
+          display.print("*");
+        } else if (i == changePinPosition) {
+          display.print("[");
+          display.print(changePinDigitValue);
+          display.print("]");
+        } else {
+          display.print("_");
+        }
+        if (i < 5) display.print(" ");
+      }
+      display.setCursor(0, 56);
+      display.print("CONFIRM=change CANCEL=next");
+      break;
+
+    case SETTINGS_PIN_MISMATCH:
+      display.setCursor(0, 0);
+      display.println("PIN CHANGE");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.setTextSize(1);
+      display.println("PINs do not match");
+      display.setCursor(0, 42);
+      display.println("Try again.");
+      display.setCursor(0, 56);
+      display.print("Any button to return");
+      break;
+
+    case SETTINGS_ABOUT:
+      display.setCursor(0, 0);
+      display.println("ABOUT");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.print("Firmware: ");
+      display.println("1.0.0");
+      display.print("SE: ");
+      {
+        char serial[32];
+        if (se051_get_serial(serial, sizeof(serial)) == SE_OK) {
+          display.println(serial);
+        } else {
+          display.println("unknown");
+        }
+      }
+      display.print("Addr type: ");
+      {
+        address_type_t at = (address_type_t)addressTypeIdx;
+        display.println(address_type_name(at));
+      }
+      display.print("Active acct: ");
+      display.println(account_get_active());
+      display.setCursor(0, 56);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.print(" [BACK] ");
       break;
 
     case COIN_CONTROL:

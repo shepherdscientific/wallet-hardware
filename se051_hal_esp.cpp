@@ -286,6 +286,28 @@ se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
   return se051_store_key(counter_id, &value, 1);
 }
 
+se051_err_t se051_get_serial(char *buf, size_t buf_len) {
+  if (!buf || buf_len == 0) return SE_ERR_PARAM;
+  if (!g_se051_ready) return SE_ERR_COMM;
+
+  uint8_t apdu[] = { APDU_CLA, APDU_INS_GET_DATA, 0x00, 0xF0, 0x00 };
+  uint8_t raw[18];
+  se051_err_t err = i2c_xfer(SE051_I2C_ADDR, apdu, sizeof(apdu), raw, sizeof(raw));
+  if (err != SE_OK) {
+    snprintf(buf, buf_len, "SE051-unknown");
+    return err;
+  }
+
+  size_t off = 0;
+  for (int i = 0; i < 8 && off + 2 < buf_len; i++) {
+    if (i > 0) { buf[off++] = '-'; }
+    int w = snprintf(buf + off, buf_len - off, "%02X", raw[i]);
+    if (w > 0) off += (size_t)w;
+  }
+  buf[off] = '\0';
+  return SE_OK;
+}
+
 se051_err_t se051_monotonic_counter_reset(uint8_t counter_id) {
   if (!g_se051_ready) return SE_ERR_COMM;
 
