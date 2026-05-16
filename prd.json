@@ -304,7 +304,7 @@
         "Baud rate irrelevant for CDC (USB full-speed); document that any baud rate setting on host side is ignored"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "ESP32-S3 has native USB, so use USB CDC directly (not UART-to-USB chip). Configure via ESP-IDF sdkconfig: CONFIG_ESP_CONSOLE_USB_CDC=y. Arduino: use USBSerial instead of Serial for CDC."
     },
     {

@@ -1,5 +1,36 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-014 — USB CDC Serial Transport for PSBT Exchange
+- Created `base64.h/cpp`: standard base64 encoder/decoder with full round-trip fidelity (tested with 256-byte random data)
+- Created `serial_transport.h/cpp`: USB CDC serial transport layer with newline-delimited base64 protocol framing
+  - `serial_init()` / `serial_send_ready()` / `serial_send_signed()` / `serial_send_error()` / `serial_send_rejected()` / `serial_poll()`
+  - Protocol: device sends `READY\n`, host sends `PSBT:<base64>\n`, device replies `SIGNED:<base64>\n` / `ERROR:<code>\n` / `REJECTED\n`
+  - Supports both `VERIFY:<address>\n` command for US-015 readiness
+  - 8 KB receive buffer; `serial_inject_line()` test injection API for host-based testing
+  - Conditional compilation: `USBSerial` with `USB_CDC_ENABLED`, fallback to `Serial` on ESP32, `stdin`/`printf` on host
+- Added `psbt_serialize()` to `psbt.cpp`: reconstructs v0 PSBT binary from in-memory psbt_t fields
+  - Rebuilds unsigned TX from parsed fields (tx_version, inputs/outputs, locktime, segwit marker flag)
+  - Serializes all present input map fields (witness_utxo, sighash_type, bip32_derivation, taproot, partial_sig, tap_key_sig, txid/vout/sequence)
+  - Serializes output map fields (amount, script, bip32_derivation)
+  - Added `tx_has_segwit_marker` to psbt_t struct for fidelity of reconstructed unsigned TX
+- Updated `wallet1.ino`:
+  - Added `WAIT_PSBT` state: polls serial for incoming PSBT, displays "Waiting for PSBT over USB CDC..."
+  - SIGN_TX now transitions to WAIT_PSBT (sends READY, waits for PSBT from host)
+  - USB rejection: any cancel in the signing flow (WAIT_PSBT, TX_FEE_REVIEW, last output cancel) sends REJECTED\n
+  - Signing success: serializes signed PSBT and sends SIGNED:<base64>\n over USB
+  - Signing error: sends ERROR:<code>\n with SE error code
+  - Added `psbtFromUsb` flag to track USB vs local demo flows
+  - Added "5. Demo Sign (PSBT)" menu item for standalone testing with embedded DEMO_PSBT
+  - `initTransactionReviewFromBuffer(psbt_data, len)` refactored from original `initTransactionReview()`
+- 26 new unit tests: base64 encode/decode (10 tests), PSBT serialize round-trip with partial_sig/tap_key_sig/taproot (8 tests), serial transport protocol framing (8 tests)
+- All 170 tests pass (144 existing + 26 new)
+
+Patterns discovered:
+- PSBT serialize pattern: reconstruct unsigned tx from parsed fields (not stored raw bytes) — requires segwit marker flag for fidelity
+- Serial transport test injection pattern: `serial_inject_line()` API allows host-based testing of the protocol parser without real USB hardware
+- USB CDC conditional compilation pattern: use `#if defined(USB_CDC_ENABLED) → USBSerial` else `Serial` for ESP32, `stdin`/`printf` for host testing
+- PSBT v0 unsigned tx reconstruction: varint-encoded input/output counts, 32-byte txid + 4-byte vout + 0x00 scriptSig_len + 4-byte sequence per input, 8-byte sat amount + varint scriptPubKey_len + scriptPubKey per output
+
 ### 2026-05-16: US-012 — PSBT Signing via SE051C2 (ECDSA + Schnorr)
 - Created `psbt_signer.h/cpp`: BIP143 sighash (P2WPKH) and BIP341 sighash (P2TR key-path) computation
 - `sighash_bip143(psbt, input_idx, sighash_type, hash_out)`: SHA256d of serialized BIP143 signing data
