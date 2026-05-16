@@ -152,7 +152,7 @@
         "Word entry state saves progress in RAM (not flash) so a button mis-press does not lose all progress"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Full BIP39 wordlist traversal with 2 buttons is slow. Consider letter-by-letter disambiguation: first button picks letter, second confirms, narrowing the word list progressively."
     },
     {

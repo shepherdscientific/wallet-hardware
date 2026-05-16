@@ -96,3 +96,28 @@ Patterns discovered:
 - Auto-dim: OLED blanks after 30 s of no button press during ceremony; any button restores display
 - setup() now checks wallet_is_initialized() to detect first-boot; ceremony only runs when wallet is uninitialized
 - All 71 existing unit tests continue to pass
+
+### 2026-05-16: US-007 — Wallet Restore from BIP39 Mnemonic
+- Added `bip39_find_prefix()` to `bip39.h/cpp`: binary search on sorted wordlist for prefix matching, returns first match index and count
+- Added BOOT_MENU state: user chooses "New Wallet" or "Restore" on first boot (CANCEL=cycle, CONFIRM=select)
+- Implemented two-phase restore input:
+  - Letter Entry (MNEMONIC_RESTORE_LETTER): CONFIRM cycles letters A-Z, CANCEL locks letter and advances to next prefix position
+  - Word Scroll (MNEMONIC_RESTORE_WORD): CANCEL scrolls filtered matches, CONFIRM selects current word
+  - Auto-transitions to word scroll when match count <= 30 and prefix length >= 3
+  - Prefix buffer capped at 4 chars with overflow guard
+- Live match preview: `updateRestoreMatchesPreview()` computes matches for tentative prefix+letter during cycling
+- Zero-match/division-by-zero guards: `restoreMatchCount > 0` check before word scroll and modulo operations
+- BIP39 checksum validation: `bip39_validate()` after all 24 words; "Bad checksum - retry" error screen with retry from word 1
+- Passphrase prompt (RESTORE_PASSPHRASE): Y/N menu after valid mnemonic; both paths currently use NULL passphrase (US-013 pending)
+- 5-minute restore timeout: `millis()` check in loop() resets to BOOT_MENU if exceeded
+- All restore state in RAM (restoreWords, restorePrefix, restoreLetter, restoreMatchCount); `secureZeroRestore()` volatile wipe after seed generation
+- 6 new bip39_find_prefix unit tests (prefix 'a', 'z', 'zzz', 'aba', 'ab', exact match); all 94 tests pass
+- Updated wallet1.ino: added BOOT_MENU, MNEMONIC_RESTORE_LETTER, MNEMONIC_RESTORE_WORD, RESTORE_ERROR, RESTORE_PASSPHRASE states with navigation+rendering
+- Updated AGENTS.md with Prefix-Based Word Selection pattern
+
+Patterns discovered:
+- Binary search on sorted wordlist: find lower_bound via strcmp, then count matching entries with starts_with check
+- Two-phase input for large wordlists: letter-by-letter narrowing (CONFIRM=cycle, CANCEL=lock) then word scroll selection (CANCEL=scroll, CONFIRM=select)
+- UI consistency: CONFIRM cycles values, CANCEL locks/advances — same pattern as PIN entry (CONFIRM increments digit, CANCEL advances position)
+- Zero-match guard pattern: never enter word scroll with 0 matches, never modulo by zero
+- Preview pattern: show live match count for tentative input (prefix + current letter) during cycling
