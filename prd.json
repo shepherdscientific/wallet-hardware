@@ -216,7 +216,7 @@
         "Test: parse the BIP174 example PSBT from the BIP specification and verify all fields"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Allocate PSBT struct on heap; free after signing. ESP32-S3 has 512 KB SRAM so 4 KB PSBTs are fine. No dynamic allocation during parsing; use fixed-size struct fields."
     },
     {

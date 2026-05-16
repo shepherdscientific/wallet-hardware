@@ -118,7 +118,16 @@ python3 -c "import json; d=json.load(open('prd.json')); print('Duplicates found!
 - **Address type cycling UI:** Store type index (0=P2PKH, 1=P2WPKH, 2=P2TR), CANCEL advances type, CONFIRM returns to menu. Generate via `address_generate(type, index, str)` which selects the correct derivation path (44'/84'/86').
 - Agents: `bitcoin-protocol-engineer`, `firmware-engineer`.
 
-### QR Code Rendering on SSD1306
+### PSBT Parsing (BIP174/BIP370)
+- Use `typedef enum { PSBT_OK, PSBT_ERR_INVALID, PSBT_ERR_MAGIC, ... } psbt_err_t;` for typed error codes.
+- Parse PSBT buffer as: magic bytes (5) → global map (until 0x00 separator) → input maps (each until 0x00) → output maps (each until 0x00).
+- v0: extract input_count/output_count from global unsigned TX (legacy format, no segwit marker/flag). v2: classify maps by scanning for PSBT_IN_PREVIOUS_TXID (0x0E) — input-only key type.
+- Key-value encoding: compact size varint for key_len + value_len. Key data = key_type (1 byte) + optional extra bytes. Separator = key_len varint of 0x00.
+- **Critical:** `read_u64le/read_u32le` modify their `*pos` pointer argument. When using these inside a KV parser, save the original value position (`size_t val_end = val_start + val_len;`) before calls and use `*pos = val_end` after.
+- PSBT_IN_SIGHASH_TYPE (0x03) and PSBT_OUT_AMOUNT (0x03) share key type — classification by key type alone is ambiguous in v2. Use PSBT_IN_PREVIOUS_TXID (0x0E) as the definitive input-only discriminator.
+- Fingerprints stored as `uint8_t[4]` for portability, not `uint32_t`.
+- Host-based testing: `g++ -DUSE_SE_STUB -I. psbt.cpp test_psbt.cpp` — self-contained PSBT builder functions in test file produce valid v0/v2 PSBTs. No ESP32 toolchain needed.
+- Agents: `bitcoin-protocol-engineer`.
 - Use ricmoo/QRCode library (MIT, self-contained) with `extern "C"` guards for cross-platform compatibility.
 - Wrapper (`qr_renderer.cpp`) handles: uppercase bech32 for alphanumeric mode, version auto-selection from capacity tables, capacity pre-validation (library doesn't report overflow).
 - Rendering in wallet1.ino: use `display.fillRect()` at integer scale (1-3px), centered via `(128 - size*scale)/2` offset.

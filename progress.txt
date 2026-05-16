@@ -145,7 +145,29 @@ Patterns discovered:
 - Fixed-size buffers for Bitcoin address encoding: max Base58Check output ~35 chars, max Bech32 ~73 chars, safe bound is 128 chars
 - Address type cycling UI: store type index (0-2), CANCEL advances, CONFIRM returns to menu
 
-### 2026-05-16: US-009 — QR Code Rendering for Receive Address on SSD1306
+### 2026-05-16: US-010 — PSBT v0/v2 Parser (BIP174/BIP370)
+- Created `psbt.h`: typed error codes (`PSBT_OK`, `PSBT_ERR_MAGIC`, `PSBT_ERR_PARSE`, etc.), PSBT input/output structs with fixed-size fields (max 4 inputs, 4 outputs, 4 KB buffer)
+- Created `psbt.cpp`: complete PSBT v0 (BIP174) and v2 (BIP370) parser
+  - `psbt_parse()`: validates magic bytes (0x70736274ff/0x70736274fe), parses global map (unsigned TX for v0, version for v2), then per-input and per-output maps
+  - v0: extracts input_count/output_count from global unsigned TX in legacy format (with segwit marker/flag detection)
+  - v2: classifies maps by scanning for PSBT_IN_PREVIOUS_TXID (0x0E) as input-only discriminator — avoids PSBT_IN_SIGHASH_TYPE (0x03) / PSBT_OUT_AMOUNT (0x03) key type collision
+  - Compact size varint reader handles uint8-uint64 lengths
+  - `psbt_get_total_input_value()`: sums witness UTXO amounts across all inputs
+  - `psbt_get_total_output_value()`: sums output amounts from global TX (v0) or PSBT_OUT_AMOUNT (v2)
+  - `psbt_get_fee()`: returns (in - out) or -1 for negative fee
+  - Extracts: previous txid, vout, sequence, sighash type, witness UTXO (amount + scriptPubKey), BIP32 derivation (fingerprint + path + pubkey), Taproot internal key
+  - All value accessors accept NULL and return 0
+  - Fingerprints stored as `uint8_t[4]` for endian-neutral portability
+- 20 unit tests: v0 parse with 1 input/output, v2 parse, magic/buffer/NULL validation, fee calculation (v0 and v2), BIP32 derivation path, malformed/truncated PSBTs, Taproot internal key
+- Tests compile with `g++ -DUSE_SE_STUB -I. psbt.cpp test_psbt.cpp`
+- All 159 tests pass (139 existing + 20 new)
+
+Patterns discovered:
+- read_u64le/read_u32le modify their `*pos` pointer — must save original value position before calling: `size_t val_end = val_start + val_len;` then `*pos = val_end` after
+- v2 map classification: key types 0x03-0x04 overlap between input and output maps — scan all keys in a map for PSBT_IN_PREVIOUS_TXID (0x0E) to classify as input
+- PSBT unsigned TX format: use legacy format (no segwit marker/flag) for v0 PSBT with witness UTXO data; segwit marker/flag detection for robustness
+- Host-based PSBT testing: build valid PSBTs programmatically in test file using write_varint/write_kv helpers — no Bitcoin node or external data needed
+>
 - Included ricmoo/QRCode library (`qrcode.h/c`): MIT-licensed, self-contained QR code generator with Reed-Solomon ECC
 - Created `qr_renderer.h/cpp`: wrapper with version auto-selection (v1–v4) and alphanumeric-optimized encoding
 - `qr_init()`: uppercases text for bech32 addresses → alphanumeric mode for ~2x capacity, pre-validates against per-version capacity tables (Low ECC), selects smallest viable version
