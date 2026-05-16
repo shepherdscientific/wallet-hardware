@@ -1,5 +1,31 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-019 — UTXO Coin Control (Input Selection for Signing)
+- Added `COIN_CONTROL` state to WalletState enum and state machine (wallet1.ino)
+- Global state: `txInputSelected[PSBT_MAX_INPUTS]`, `coinControlScrollIdx`, `coinControlOwnedCount`
+- `initTransactionReviewFromBuffer()`: counts owned inputs (BIP32 derivation present), pre-selects all owned
+- UI renderer: scrollable UTXO list with [*]/[ ] toggle indicators, truncated txid (4-byte hex), vout, formatted sats
+  - Windowed viewport (visibleCount = min(totalItems, 5)) centered on scrollIdx, inverted text for highlight
+  - External/non-owned inputs shown as "(E) EXTERNAL - skip" (dimmed, not in scroll list)
+  - Bottom footer shows selected sats total + "CANCEL=scroll CONFIRM=toggle" instruction
+  - "> PROCEED TO REVIEW" option at end of owned list; CONFIRM on it checks >=1 selected and transitions to TX_FEE_REVIEW
+- Navigation handler: CANCEL scrolls through ownedCount+1 items, CONFIRM toggles selected UTXO or proceeds to review
+  - "Select at least 1 input" guard: PROCEED only allowed when anySelected is true
+- Flow wiring: both WAIT_PSBT (USB) and Demo Sign (menu item 5) now check `coinControlOwnedCount > 1`
+  - Multi-owned-input PSBTs route through COIN_CONTROL; single-input PSBTs go directly to TX_FEE_REVIEW
+- Modified `psbt_sign(psbt, selected)` in psbt_signer.h/cpp: skips inputs where `selected && !selected[i]`
+  - NULL selected pointer = sign all (backward compatible)
+  - `executeSigningSequence()` passes `txInputSelected` to psbt_sign
+- 8 new unit tests: all selected, subset selected, none selected, single input, first only, last only, NULL psbt, NULL selected (signs all)
+- Tests compile with `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp wallet_storage.cpp psbt_signer.cpp test_coin_control.cpp`
+- All 20 tests pass (8 coin control + 12 account manager)
+
+Patterns discovered:
+- Coin control toggle pattern: CANCEL scrolls items, CONFIRM toggles selection; PROCEED item at end for confirmation
+- Owned input detection: check `bip32_derivation.present && path_len > 0` — same as `input_is_owned()` in psbt_signer
+- Selected array pattern: pass `const bool* selected` to signing function; NULL = sign all, false entries skip signing
+- Windowed scrolling pattern: compute visibleCount/visibleCount centered around scrollIdx, clamp to bounds — same as ACCOUNT_SELECT
+
 ### 2026-05-16: US-018 — Multi-Account HD Wallet (BIP44 Account Index)
 - Created `account_manager.h/cpp`: multi-account state with NVS persistence (Preferences on ESP32, in-memory stub for host)
   - `account_init()`: initializes active account to 0 on first boot

@@ -410,8 +410,8 @@
         "Default: all owned inputs pre-selected"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": "Coin control is only meaningful when the PSBT has multiple inputs. If PSBT has 1 input, skip coin control screen and go directly to review."
+      "passes": true,
+      "notes": "Implementation complete. COIN_CONTROL state with scrollable UTXO list + PROCEED option. CANCEL scrolls, CONFIRM toggles selection ([*]/[ ] indicators). External/non-owned inputs shown as EXTERNAL - skip. Selected sats total in footer. Coin control skipped for single-input PSBTs. psbt_sign(psbt, selected) respects selection array. 8 unit tests cover all/none/subset/NULL selection behavior."
     },
     {
       "id": "US-020",
