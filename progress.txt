@@ -1,0 +1,17 @@
+## Progress Log — CoinCube Hardware Wallet
+
+### 2026-05-16: US-002 — True-Random BIP39 Seed Generation via SE TRNG
+- Created `sha256.h/cpp`: self-contained SHA-256 implementation with FIPS 180-4 test vectors
+- Created `bip39.h/cpp`: BIP39 mnemonic generation using se051_get_random() for 256-bit entropy
+- Embedded complete 2048-word BIP39 English wordlist as const array in flash
+- `bip39_generate()`: extracts entropy → SHA-256 checksum → 24 11-bit indices → word lookup
+- `bip39_validate()`: reverse-engineers checksum from words to verify mnemonic integrity
+- `bip39_word_to_index()`: O(n) linear scan of wordlist for restore flow (US-007 prep)
+- `static_assert` enforces BIP39_WORDLIST_SIZE == 2048 at compile time
+- All entropy/checksum buffers zeroed with volatile memset after use
+- 14 unit tests including generate→validate round-trip, wordlist membership, varied output
+- Tests compile with `g++ -DUSE_SE_STUB -I. sha256.cpp bip39.cpp se051_hal_stub.cpp test_bip39.cpp`
+
+Patterns discovered:
+- BIP39 bit manipulation: encode (read 2-3 bytes, shift right by 5/13 minus bit_shift, mask 0x7FF) and decode (first byte gets >>3+bit_shift, remaining bits go to subsequent bytes)
+- Host-based testing pattern: `g++ -DUSE_SE_STUB` links stub HAL + new module + test file → self-contained test binary

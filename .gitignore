@@ -2,6 +2,8 @@
 *.hex
 *.elf
 *.bin
+test_bip39
+test_se051_stub
 
 # Build Folders
 # These are generated during compilation and shouldn't be tracked

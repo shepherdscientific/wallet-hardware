@@ -47,7 +47,7 @@
         "Compile-time assert: BIP39_WORDLIST_SIZE == 2048"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "BIP39 wordlist can be embedded as a PROGMEM array on ESP32-S3. Use micro-ecc or mbedTLS SHA-256 already available in ESP-IDF."
     },
     {
