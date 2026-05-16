@@ -1,0 +1,25 @@
+# Compiled Binaries (Executable files)
+*.hex
+*.elf
+*.bin
+
+# Build Folders
+# These are generated during compilation and shouldn't be tracked
+build/
+bin/
+out/
+
+# IDE Specific Files (Arduino IDE 2.x and Visual Studio)
+.arduino/
+.vscode/
+.settings/
+*.visual_studio_cache
+
+# Operating System Specific
+Thumbs.db
+.DS_Store
+
+# Local configuration and secrets
+# Don't track your private WiFi passwords or API keys
+secrets.h
+
