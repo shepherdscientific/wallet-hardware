@@ -1,0 +1,1 @@
+# coincube-hw-wallet
