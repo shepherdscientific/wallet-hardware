@@ -415,3 +415,24 @@ Patterns discovered:
 - Passphrase flag in SE: single byte in a dedicated SE object (0x07) — presence means "wallet created with passphrase", absence means standard wallet
 - Character entry UI pattern: virtual character set array with DONE sentinel at position N; CANCEL advances index, CONFIRM commits current; special [SPACE] display for space char
 - The passphrase module reuses the existing `wallet_generate_seed(mnemonic, passphrase)` that already supports BIP39 salt "mnemonic" + passphrase — no crypto changes needed
+
+### 2026-05-16: US-021 — Factory Reset (Full Key and Settings Wipe)
+- Added `settings_nvs_erase()` to settings.h/cpp: clears "settings" NVS namespace using `prefs.clear()` on ESP32, no-op on host stub
+- Added `account_nvs_erase()` to account_manager.h/cpp: clears "accounts" NVS namespace using `prefs.clear()` on ESP32, no-op on host stub
+- Added `SETTINGS_FACTORY_RESET_CONFIRM` and `SETTINGS_FACTORY_RESET_SURE` to WalletState enum
+- Settings menu expanded from 5 to 6 items: added "Factory Reset" at index 4, "About" shifted to index 5
+- Settings menu rendering updated with scrollable 4-item visible window (centered on selection) to fit 128x64 OLED
+- Double-confirmation UI:
+  - First screen: "Reset wallet? [CANCEL=No] [CONFIRM=Yes]" — text on white inverted background
+  - Second screen: "Are you sure? This cannot be undone. [CANCEL=No] [CONFIRM=WIPE]"
+  - On WIPE confirm: display "Wiping..." on OLED, call wallet_factory_reset() (SE objects 0x01-0x07), settings_nvs_erase(), account_nvs_erase(), then transition to WALLET_WIPED
+- WALLET_WIPED auto-reboots after 4 seconds (existing behavior)
+- Factory reset requires PIN authentication (accessible only from Settings menu, which requires PIN to enter)
+- Factory reset does NOT wipe firmware — only data (SE keys + NVS namespaces)
+- Added SETTINGS_FACTORY_RESET_CONFIRM and SETTINGS_FACTORY_RESET_SURE to auto-lock/auto-dim clusters in loop() for inactivity protection
+- All 30 existing tests pass (10 settings + 12 account_manager + 8 coin_control)
+
+Patterns discovered:
+- Scrollable list pattern for OLED 128x64: compute visible window of N items centered on selected index, with bounds clamping (firstIdx = max(0, lastIdx - visibleItems))
+- NVS erase pattern: prefs.begin(namespace, false) → prefs.clear() → prefs.end() — clear() erases all keys in namespace without needing individual key names
+- Factory reset as a multi-module orchestration: call SE delete (pin_manager), settings erase (settings), account erase (account_manager) from the state machine handler — each module owns its own storage

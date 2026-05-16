@@ -152,3 +152,11 @@ const char *settings_auto_lock_label(uint8_t val) {
         default:                      return "?";
     }
 }
+
+void settings_nvs_erase(void) {
+#if defined(ARDUINO) && defined(ESP32)
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.clear();
+    prefs.end();
+#endif
+}

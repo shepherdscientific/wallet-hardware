@@ -116,3 +116,11 @@ void account_set_name(uint32_t account, const char *name) {
 }
 
 #endif
+
+void account_nvs_erase(void) {
+#if defined(ARDUINO) && defined(ESP32)
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.clear();
+    prefs.end();
+#endif
+}

@@ -48,6 +48,8 @@ uint32_t    settings_auto_lock_ms(uint8_t val);
 const char *settings_disp_timeout_label(uint8_t val);
 const char *settings_auto_lock_label(uint8_t val);
 
+void settings_nvs_erase(void);
+
 #ifdef __cplusplus
 }
 #endif

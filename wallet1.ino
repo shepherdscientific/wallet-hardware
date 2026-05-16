@@ -75,7 +75,9 @@ enum WalletState {
   SETTINGS_CHANGE_PIN_NEW,
   SETTINGS_CHANGE_PIN_CONFIRM,
   SETTINGS_PIN_MISMATCH,
-  SETTINGS_ABOUT
+  SETTINGS_ABOUT,
+  SETTINGS_FACTORY_RESET_CONFIRM,
+  SETTINGS_FACTORY_RESET_SURE
 };
 WalletState currentState = PIN_SETUP;
 
@@ -188,12 +190,13 @@ uint8_t coinControlOwnedCount;
 
 // --- SETTINGS STATE ---
 uint8_t settingsMenuIdx = 0;
-const int SETTINGS_ITEM_COUNT = 5;
+const int SETTINGS_ITEM_COUNT = 6;
 const char* settingsItems[] = {
   "Display Timeout",
   "Auto-Lock Timeout",
   "Display Contrast",
   "Change PIN",
+  "Factory Reset",
   "About"
 };
 uint8_t settingsSubIdx = 0;
@@ -519,7 +522,9 @@ void loop() {
       currentState == SETTINGS_TIMEOUT ||
       currentState == SETTINGS_AUTOLOCK ||
       currentState == SETTINGS_CONTRAST ||
-      currentState == SETTINGS_ABOUT) {
+      currentState == SETTINGS_ABOUT ||
+      currentState == SETTINGS_FACTORY_RESET_CONFIRM ||
+      currentState == SETTINGS_FACTORY_RESET_SURE) {
     uint32_t auto_lock_ms = settings_auto_lock_ms(settings_get_auto_lock());
     if (auto_lock_ms > 0 &&
         millis() - lastActivityMs > auto_lock_ms) {
@@ -1093,6 +1098,8 @@ void handleNavigation() {
           memset(changePinConfirmDigits, 0, sizeof(changePinConfirmDigits));
           currentState = SETTINGS_CHANGE_PIN_OLD;
         } else if (settingsMenuIdx == 4) {
+          currentState = SETTINGS_FACTORY_RESET_CONFIRM;
+        } else if (settingsMenuIdx == 5) {
           currentState = SETTINGS_ABOUT;
         }
       }
@@ -1206,6 +1213,33 @@ void handleNavigation() {
     case SETTINGS_ABOUT:
       lastActivityMs = millis();
       if (confirmPressed || cancelPressed) {
+        currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case SETTINGS_FACTORY_RESET_CONFIRM:
+      lastActivityMs = millis();
+      if (confirmPressed) {
+        currentState = SETTINGS_FACTORY_RESET_SURE;
+      } else if (cancelPressed) {
+        currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case SETTINGS_FACTORY_RESET_SURE:
+      lastActivityMs = millis();
+      if (confirmPressed) {
+        display.clearDisplay();
+        display.setCursor(0, 20);
+        display.setTextSize(2);
+        display.println("Wiping...");
+        display.display();
+        wallet_factory_reset();
+        settings_nvs_erase();
+        account_nvs_erase();
+        currentState = WALLET_WIPED;
+        lastActivityMs = millis();
+      } else if (cancelPressed) {
         currentState = SETTINGS_MENU;
       }
       break;
@@ -1978,17 +2012,30 @@ void renderCurrentState() {
       display.setCursor(0, 0);
       display.println("SETTINGS");
       display.println("---------------------");
-      for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
-        display.setCursor(0, 18 + i * 9);
-        if (i == (int)settingsMenuIdx) {
-          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-          display.print("> ");
-          display.print(settingsItems[i]);
-          while (display.getCursorX() < 21 * 6) display.print(" ");
-          display.setTextColor(SSD1306_WHITE);
-        } else {
-          display.print("  ");
-          display.print(settingsItems[i]);
+      {
+        int visibleItems = (SETTINGS_ITEM_COUNT < 4) ? SETTINGS_ITEM_COUNT : 4;
+        int half = visibleItems / 2;
+        int firstIdx = (int)settingsMenuIdx - half;
+        if (firstIdx < 0) firstIdx = 0;
+        int lastIdx = firstIdx + visibleItems;
+        if (lastIdx > SETTINGS_ITEM_COUNT) {
+          lastIdx = SETTINGS_ITEM_COUNT;
+          firstIdx = lastIdx - visibleItems;
+          if (firstIdx < 0) firstIdx = 0;
+        }
+        for (int i = firstIdx; i < lastIdx; i++) {
+          int row = 18 + (i - firstIdx) * 9;
+          display.setCursor(0, row);
+          if (i == (int)settingsMenuIdx) {
+            display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+            display.print("> ");
+            display.print(settingsItems[i]);
+            while (display.getCursorX() < 21 * 6) display.print(" ");
+            display.setTextColor(SSD1306_WHITE);
+          } else {
+            display.print("  ");
+            display.print(settingsItems[i]);
+          }
         }
       }
       display.setCursor(0, 56);
@@ -2144,6 +2191,37 @@ void renderCurrentState() {
       display.setCursor(0, 56);
       display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
       display.print(" [BACK] ");
+      break;
+
+    case SETTINGS_FACTORY_RESET_CONFIRM:
+      display.setCursor(0, 0);
+      display.println("FACTORY RESET");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.setTextSize(1);
+      display.println("Reset wallet?");
+      display.setCursor(0, 42);
+      display.println("All keys & settings");
+      display.println("will be erased.");
+      display.setCursor(0, 56);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.print(" CANCEL=No CONFIRM=Yes ");
+      display.setTextColor(SSD1306_WHITE);
+      break;
+
+    case SETTINGS_FACTORY_RESET_SURE:
+      display.setCursor(0, 0);
+      display.println("FACTORY RESET");
+      display.println("---------------------");
+      display.setCursor(0, 24);
+      display.setTextSize(1);
+      display.println("Are you sure?");
+      display.setCursor(0, 42);
+      display.println("This cannot be undone.");
+      display.setCursor(0, 56);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.print(" CANCEL=No CONFIRM=WIPE ");
+      display.setTextColor(SSD1306_WHITE);
       break;
 
     case COIN_CONTROL:

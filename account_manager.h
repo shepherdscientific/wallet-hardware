@@ -20,6 +20,8 @@ void account_increment_address_index(uint32_t account);
 bool account_get_name(uint32_t account, char *buf, size_t len);
 void account_set_name(uint32_t account, const char *name);
 
+void account_nvs_erase(void);
+
 #ifdef __cplusplus
 }
 #endif

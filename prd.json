@@ -452,8 +452,8 @@
         "Reset operation takes < 5 s; progress shown as 'Wiping...' on OLED"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": "The double-confirmation is intentional friction to prevent accidental wipe. Consider requiring the user to hold CONFIRM for 3 seconds on the second confirmation."
+      "passes": true,
+      "notes": "Implementation complete. Factory reset accessible from Settings menu (index 4) with double-confirmation UI: SETTINGS_FACTORY_RESET_CONFIRM (CANCEL=No/CONFIRM=Yes) then SETTINGS_FACTORY_RESET_SURE (CANCEL=No/CONFIRM=WIPE). Wallet_factory_reset() deletes SE objects 0x01-0x07; settings_nvs_erase() and account_nvs_erase() clear NVS namespaces settings/accounts. WALLET_WIPED state shown with auto-reboot after 4s. Settings menu now has 6 items with scrollable 4-item visible window on 128x64 OLED. 30 existing tests pass."
     },
     {
       "id": "US-022",
