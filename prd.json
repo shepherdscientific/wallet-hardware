@@ -325,8 +325,8 @@
         "Address type and index shown alongside address during verification"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": "This is a critical security feature. The whole point of a hardware wallet is that the address displayed on device is trusted. Always derive independently rather than displaying the host-provided address directly."
+      "passes": true,
+      "notes": "Implementation complete. VERIFY_ADDRESS state with USB polling + match/mismatch rendering + flash alarm + serial responses. Address type/index cycling via CANCEL. Standalone mode for manual comparison. All 160 existing tests pass."
     },
     {
       "id": "US-016",

@@ -1,5 +1,22 @@
 ## Progress Log — CoinCube Hardware Wallet
 
+### 2026-05-16: US-015 — Address Verification Flow (Anti-Substitution)
+- Added `serial_send_verified()` / `serial_send_mismatch()` to serial_transport (USB responses: "VERIFIED\n" / "MISMATCH\n")
+- Added three new wallet states: VERIFY_ADDRESS (standalone display + USB poll), VERIFY_MATCH (verified OK indicator), VERIFY_MISMATCH (flash alarm 3 cycles)
+- Menu: added "6. Verify Address" item (TOTAL_MENU_ITEMS now 6), enters VERIFY_ADDRESS using current addressTypeIdx/addressIndex
+- VERIFY_ADDRESS loop: polls for SERIAL_CMD_VERIFY over USB; independently derives address via updateAddressDisplay(), byte-for-byte strcmp with received address
+- VERIFY_ADDRESS navigation: CANCEL cycles address type (P2PKH→P2WPKH→P2TR), CONFIRM returns to menu (standalone verify done)
+- VERIFY_MATCH: displays "VERIFIED OK" inverted banner; any button sends VERIFIED and returns to menu
+- VERIFY_MISMATCH: displays "ADDRESS MISMATCH!" with full-display invert flash 3x (300ms/cycle, alternating), then static; any button sends MISMATCH and returns to menu
+- Address type, index, and full address string shown on all verify screens
+- Reuses existing addressTypeIdx/addressIndex state from SHOW_ADDRESS for consistency between receive and verify flows
+- All 160 existing tests pass (no regressions); serial transport VERIFY parsing test already existed
+
+Patterns discovered:
+- USB polling in loop(): follow WAIT_PSBT pattern — if currentState matches, poll serial in main loop, transition on command receipt
+- 2-button verify menu pattern: CANCEL cycles values (type), CONFIRM commits action (back to menu) — same as SHOW_ADDRESS
+- Flash alarm pattern: use display.invertDisplay() true/false alternating based on millis() elapsed time; toggle every N ms for M cycles, then static
+
 ### 2026-05-16: US-014 — USB CDC Serial Transport for PSBT Exchange
 - Created `base64.h/cpp`: standard base64 encoder/decoder with full round-trip fidelity (tested with 256-byte random data)
 - Created `serial_transport.h/cpp`: USB CDC serial transport layer with newline-delimited base64 protocol framing
