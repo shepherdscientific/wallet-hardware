@@ -25,9 +25,13 @@ void pin_reset(void);
 
 uint8_t pin_get_attempts(void);
 
-void pin_increment_attempts(void);
+bool pin_increment_attempts(void);
 
 void pin_reset_attempts(void);
+
+uint8_t pin_attempts_remaining(void);
+
+bool pin_is_near_lockout(void);
 
 void pin_get_device_uid(uint8_t uid[8]);
 

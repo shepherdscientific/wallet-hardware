@@ -138,4 +138,35 @@ se051_err_t se051_selftest(void) {
   return SE_OK;
 }
 
+se051_err_t se051_monotonic_counter_get(uint8_t counter_id,
+                                        uint32_t *value) {
+  if (!value) return SE_ERR_PARAM;
+  if (!g_key_store_valid[counter_id]) {
+    *value = 0;
+    return SE_OK;
+  }
+  *value = g_key_store_data[counter_id][0];
+  return SE_OK;
+}
+
+se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
+  uint32_t current = 0;
+  if (g_key_store_valid[counter_id]) {
+    current = g_key_store_data[counter_id][0];
+  }
+  if (current >= 255) return SE_ERR_MEMORY;
+  current++;
+  g_key_store_data[counter_id][0] = (uint8_t)current;
+  g_key_store_len[counter_id] = 1;
+  g_key_store_valid[counter_id] = 1;
+  return SE_OK;
+}
+
+se051_err_t se051_monotonic_counter_reset(uint8_t counter_id) {
+  g_key_store_data[counter_id][0] = 0;
+  g_key_store_len[counter_id] = 1;
+  g_key_store_valid[counter_id] = 1;
+  return SE_OK;
+}
+
 #endif // USE_SE_STUB

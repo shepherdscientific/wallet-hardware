@@ -404,6 +404,11 @@ void loop() {
     currentState = MAIN_MENU;
   }
 
+  if (currentState == WALLET_WIPED &&
+      (millis() - lastActivityMs > 4000)) {
+    ESP.restart();
+  }
+
   if ((currentState == MNEMONIC_DISPLAY || currentState == MNEMONIC_VERIFY) &&
       displayOn && (millis() - lastActivityMs > 30000)) {
     displayOn = false;
@@ -532,6 +537,10 @@ void handleNavigation() {
         pinPosition++;
         pinDigitValue = 0;
         if (pinPosition >= 6) {
+          if (pinAttempts < PIN_MAX_ATTEMPTS) {
+            pin_increment_attempts();
+            pinAttempts = pin_get_attempts();
+          }
           if (pin_verify(pinDigits)) {
             pin_reset_attempts();
             pinAttempts = 0;
@@ -542,11 +551,10 @@ void handleNavigation() {
               enterDeviceIdDisplay();
             }
           } else {
-            pin_increment_attempts();
-            pinAttempts = pin_get_attempts();
-            if (pinAttempts >= 5) {
+            if (pinAttempts >= PIN_MAX_ATTEMPTS) {
               wallet_factory_reset();
               currentState = WALLET_WIPED;
+              lastActivityMs = millis();
             } else {
               pinPosition = 0;
               pinDigitValue = 0;
@@ -847,6 +855,9 @@ void handleNavigation() {
       break;
 
     case WALLET_WIPED:
+      if (confirmPressed || cancelPressed) {
+        ESP.restart();
+      }
       break;
 
     case VERIFY_ADDRESS:
@@ -1140,11 +1151,19 @@ void renderCurrentState() {
         }
         if (i < 5) display.print(" ");
       }
-      if (pinAttempts > 0) {
+      if (pinAttempts >= 3 && pinAttempts < PIN_MAX_ATTEMPTS) {
+        display.setCursor(0, 40);
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print("WARNING: ");
+        display.print(pin_attempts_remaining());
+        display.print(" attempts remaining");
+        display.setTextColor(SSD1306_WHITE);
+      } else if (pinAttempts > 0) {
         display.setCursor(0, 40);
         display.print("Attempt ");
         display.print(pinAttempts);
-        display.print(" of 5");
+        display.print(" of ");
+        display.print(PIN_MAX_ATTEMPTS);
       }
       display.setCursor(0, 56);
       display.print("CONFIRM=change CANCEL=next");
@@ -1413,6 +1432,8 @@ void renderCurrentState() {
       display.setTextSize(1);
       display.setCursor(0, 48);
       display.println("Restore from seed");
+      display.setCursor(0, 56);
+      display.print("Reboot to begin");
       break;
 
     case VERIFY_ADDRESS:

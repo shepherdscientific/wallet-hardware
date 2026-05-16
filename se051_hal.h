@@ -80,6 +80,13 @@ se051_err_t se051_read_object(uint8_t obj_id,
                               uint8_t *buf, size_t buf_len,
                               size_t *out_len);
 
+se051_err_t se051_monotonic_counter_get(uint8_t counter_id,
+                                        uint32_t *value);
+
+se051_err_t se051_monotonic_counter_increment(uint8_t counter_id);
+
+se051_err_t se051_monotonic_counter_reset(uint8_t counter_id);
+
 #ifdef __cplusplus
 }
 #endif

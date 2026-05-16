@@ -81,23 +81,32 @@ void pin_reset(void) {
 }
 
 uint8_t pin_get_attempts(void) {
-  uint8_t counter[1] = {0};
-  size_t out_len = 0;
-  if (se051_read_object(SE051_OBJ_PIN_COUNTER, counter, 1, &out_len) != SE_OK) {
+  uint32_t value = 0;
+  if (se051_monotonic_counter_get(SE051_OBJ_PIN_COUNTER, &value) != SE_OK) {
     return 0;
   }
-  return counter[0];
+  return (uint8_t)value;
 }
 
-void pin_increment_attempts(void) {
-  uint8_t counter = pin_get_attempts();
-  counter++;
-  se051_store_key(SE051_OBJ_PIN_COUNTER, &counter, 1);
+bool pin_increment_attempts(void) {
+  uint32_t before = 0;
+  se051_monotonic_counter_get(SE051_OBJ_PIN_COUNTER, &before);
+  if (before >= 255) return false;
+  return se051_monotonic_counter_increment(SE051_OBJ_PIN_COUNTER) == SE_OK;
 }
 
 void pin_reset_attempts(void) {
-  uint8_t counter = 0;
-  se051_store_key(SE051_OBJ_PIN_COUNTER, &counter, 1);
+  se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
+}
+
+uint8_t pin_attempts_remaining(void) {
+  uint8_t attempts = pin_get_attempts();
+  if (attempts >= PIN_MAX_ATTEMPTS) return 0;
+  return PIN_MAX_ATTEMPTS - attempts;
+}
+
+bool pin_is_near_lockout(void) {
+  return pin_get_attempts() >= 3;
 }
 
 void wallet_factory_reset(void) {

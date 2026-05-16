@@ -155,37 +155,91 @@ int main(void) {
 
   TEST("pin_get_attempts returns 0 initially");
   {
-    pin_reset();
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
     uint8_t pin[6] = {7, 7, 7, 7, 7, 7};
     pin_setup(pin);
     if (pin_get_attempts() == 0) PASS();
     else FAIL("initial attempts should be 0");
   }
 
-  TEST("pin_increment_attempts increases counter");
+  TEST("pin_increment_attempts increases counter and returns true");
   {
-    pin_increment_attempts();
-    uint8_t count = pin_get_attempts();
-    if (count == 1) PASS();
-    else { printf("(got %d) ", count); FAIL("attempts should be 1 after increment"); }
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
+    if (pin_increment_attempts()) {
+      uint8_t count = pin_get_attempts();
+      if (count == 1) PASS();
+      else { printf("(got %d) ", count); FAIL("attempts should be 1 after increment"); }
+    } else {
+      FAIL("increment should return true");
+    }
   }
 
   TEST("pin_reset_attempts returns counter to 0");
   {
-    pin_reset_attempts();
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
     if (pin_get_attempts() == 0) PASS();
     else FAIL("attempts should be 0 after reset");
+  }
+
+  TEST("pin_attempts_remaining returns correct values");
+  {
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
+    if (pin_attempts_remaining() != 5) FAIL("should be 5 with 0 attempts");
+    pin_increment_attempts();
+    if (pin_attempts_remaining() != 4) FAIL("should be 4 with 1 attempt");
+    pin_increment_attempts();
+    pin_increment_attempts();
+    if (pin_attempts_remaining() != 2) FAIL("should be 2 with 3 attempts");
+    pin_increment_attempts();
+    pin_increment_attempts();
+    if (pin_attempts_remaining() != 0) FAIL("should be 0 with 5 attempts");
+    PASS();
+  }
+
+  TEST("pin_is_near_lockout detects warning threshold");
+  {
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
+    if (pin_is_near_lockout()) FAIL("should not warn at 0 attempts");
+    pin_increment_attempts();
+    if (pin_is_near_lockout()) FAIL("should not warn at 1 attempt");
+    pin_increment_attempts();
+    if (pin_is_near_lockout()) FAIL("should not warn at 2 attempts");
+    pin_increment_attempts();
+    if (!pin_is_near_lockout()) FAIL("should warn at 3 attempts");
+    pin_increment_attempts();
+    if (!pin_is_near_lockout()) FAIL("should warn at 4 attempts");
+    pin_increment_attempts();
+    if (!pin_is_near_lockout()) FAIL("should warn at 5 attempts");
+    PASS();
+  }
+
+  TEST("Monotonic counter only increases via increment");
+  {
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
+    uint32_t val = 0;
+    se051_monotonic_counter_get(SE051_OBJ_PIN_COUNTER, &val);
+    if (val != 0) FAIL("should start at 0");
+    se051_monotonic_counter_increment(SE051_OBJ_PIN_COUNTER);
+    se051_monotonic_counter_get(SE051_OBJ_PIN_COUNTER, &val);
+    if (val != 1) FAIL("should be 1 after first increment");
+    se051_monotonic_counter_increment(SE051_OBJ_PIN_COUNTER);
+    se051_monotonic_counter_get(SE051_OBJ_PIN_COUNTER, &val);
+    if (val != 2) FAIL("should be 2 after second increment");
+    PASS();
   }
 
   TEST("Multiple pin_verifys with wrong PIN don't crash");
   {
     uint8_t good_pin[6] = {7, 7, 7, 7, 7, 7};
     uint8_t bad_pin[6]  = {0, 0, 0, 0, 0, 0};
+    se051_monotonic_counter_reset(SE051_OBJ_PIN_COUNTER);
     for (int i = 0; i < 5; i++) {
+      pin_increment_attempts();
       bool result = pin_verify(bad_pin);
       if (result) { FAIL("bad PIN verified"); return 1; }
-      pin_increment_attempts();
     }
+    uint8_t count = pin_get_attempts();
+    if (count != 5) { printf("(got %d) ", count); FAIL("counter should be 5 after 5 failed attempts"); return 1; }
     PASS();
   }
 

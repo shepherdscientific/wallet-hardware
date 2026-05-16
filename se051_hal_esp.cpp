@@ -260,4 +260,37 @@ se051_err_t se051_read_object(uint8_t obj_id,
   return err;
 }
 
+se051_err_t se051_monotonic_counter_get(uint8_t counter_id,
+                                        uint32_t *value) {
+  if (!value || !g_se051_ready) return SE_ERR_PARAM;
+
+  uint8_t buf[4] = {0};
+  size_t out_len = 0;
+  se051_err_t err = se051_read_object(counter_id, buf, sizeof(buf), &out_len);
+  if (err != SE_OK) {
+    *value = 0;
+    return (err == SE_ERR_NOTFOUND) ? SE_OK : err;
+  }
+  *value = (uint32_t)buf[0];
+  return SE_OK;
+}
+
+se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
+  if (!g_se051_ready) return SE_ERR_COMM;
+
+  uint32_t current = 0;
+  se051_err_t err = se051_monotonic_counter_get(counter_id, &current);
+  if (current >= 255) return SE_ERR_MEMORY;
+
+  uint8_t value = (uint8_t)(current + 1);
+  return se051_store_key(counter_id, &value, 1);
+}
+
+se051_err_t se051_monotonic_counter_reset(uint8_t counter_id) {
+  if (!g_se051_ready) return SE_ERR_COMM;
+
+  uint8_t zero = 0;
+  return se051_store_key(counter_id, &zero, 1);
+}
+
 #endif // USE_SE051
