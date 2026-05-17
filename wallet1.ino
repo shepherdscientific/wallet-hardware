@@ -26,6 +26,7 @@
 #include "version.h"
 #include "watchdog.h"
 #include "balance.h"
+#include "tx_history.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -88,12 +89,13 @@ enum WalletState {
   SETTINGS_ABOUT,
   SETTINGS_FACTORY_RESET_CONFIRM,
   SETTINGS_FACTORY_RESET_SURE,
+  TX_HISTORY,
   WATCHDOG_RECOVERY
 };
 WalletState currentState = PIN_SETUP;
 
 int menuIndex = 0;
-const int TOTAL_MENU_ITEMS = 8;
+const int TOTAL_MENU_ITEMS = 9;
 const char* menuItems[] = {
   "1. View Balance",
   "2. Receive (Addr)",
@@ -102,7 +104,8 @@ const char* menuItems[] = {
   "5. Demo Sign (PSBT)",
   "6. Verify Address",
   "7. Account",
-  "8. Settings"
+  "8. Settings",
+  "9. TX History"
 };
 
 // --- PIN STATE ---
@@ -208,6 +211,14 @@ uint8_t  balanceResponsesExpected = 0;
 uint8_t  balanceResponsesReceived = 0;
 bool     balanceFetchDone   = false;
 bool     balanceUsingCache  = false;
+
+// --- TX HISTORY STATE ---
+unsigned long txHistoryFetchStartMs = 0;
+uint8_t  txHistoryResponsesExpected = 0;
+uint8_t  txHistoryResponsesReceived = 0;
+bool     txHistoryFetchDone   = false;
+bool     txHistoryUsingCache  = false;
+uint8_t  txHistoryScrollIdx   = 0;
 
 // --- PQC STATE ---
 uint8_t pqcScrollOffset = 0;
@@ -591,6 +602,29 @@ void loop() {
     }
   }
 
+  if (currentState == TX_HISTORY && !txHistoryFetchDone) {
+    serial_msg_t msg = serial_poll();
+    if (msg.cmd == SERIAL_CMD_TX_ENTRY && msg.data_len >= 45) {
+      uint8_t txid[32];
+      memcpy(txid, msg.data, 32);
+      char dir = (char)msg.data[32];
+      uint64_t amount;
+      uint32_t confs;
+      memcpy(&amount, msg.data + 33, 8);
+      memcpy(&confs, msg.data + 41, 4);
+      tx_history_add_entry(txid, dir, amount, confs);
+      txHistoryResponsesReceived++;
+    }
+    if (millis() - txHistoryFetchStartMs > 2000 ||
+        txHistoryResponsesReceived >= txHistoryResponsesExpected) {
+      txHistoryFetchDone = true;
+      if (txHistoryResponsesReceived > 0) {
+      } else if (tx_history_has_cached()) {
+        txHistoryUsingCache = true;
+      }
+    }
+  }
+
   if ((currentState == MNEMONIC_DISPLAY || currentState == MNEMONIC_VERIFY) &&
       (millis() - lastActivityMs > 30000)) {
     displayOn = false;
@@ -627,6 +661,7 @@ void loop() {
       currentState == SHOW_ADDRESS ||
       currentState == QR_DISPLAY ||
       currentState == PQC_STATUS ||
+      currentState == TX_HISTORY ||
       currentState == MNEMONIC_DISPLAY ||
       currentState == MNEMONIC_VERIFY ||
       currentState == SETTINGS_MENU ||
@@ -1041,6 +1076,29 @@ void handleNavigation() {
           settingsMenuIdx = 0;
           currentState = SETTINGS_MENU;
         }
+        if (menuIndex == 8) {
+          tx_history_init();
+          txHistoryFetchStartMs = millis();
+          txHistoryResponsesExpected = 0;
+          txHistoryResponsesReceived = 0;
+          txHistoryFetchDone   = false;
+          txHistoryUsingCache  = false;
+          txHistoryScrollIdx   = 0;
+          uint32_t acct = account_get_active();
+          uint32_t maxIdx = 0;
+          account_get_address_index(acct, &maxIdx);
+          if (maxIdx > 5) maxIdx = 5;
+          char addrBuf[MAX_ADDRESS_LEN];
+          for (int t = 0; t < 3; t++) {
+            for (uint32_t i = 0; i <= maxIdx; i++) {
+              if (address_generate((address_type_t)t, acct, i, addrBuf)) {
+                serial_send_tx_history_request(addrBuf);
+                txHistoryResponsesExpected++;
+              }
+            }
+          }
+          currentState = TX_HISTORY;
+        }
       }
       break;
 
@@ -1408,10 +1466,25 @@ void handleNavigation() {
         settings_nvs_erase();
         account_nvs_erase();
         balance_nvs_erase();
+        tx_history_nvs_erase();
         currentState = WALLET_WIPED;
         lastActivityMs = millis();
       } else if (cancelPressed) {
         currentState = SETTINGS_MENU;
+      }
+      break;
+
+    case TX_HISTORY:
+      lastActivityMs = millis();
+      if (txHistoryFetchDone) {
+        if (cancelPressed) {
+          uint8_t count = tx_history_get_count();
+          if (count > 1) {
+            txHistoryScrollIdx = (txHistoryScrollIdx + 1) % count;
+          }
+        } else if (confirmPressed) {
+          currentState = MAIN_MENU;
+        }
       }
       break;
 
@@ -2529,6 +2602,72 @@ void renderCurrentState() {
       display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
       display.print(" CANCEL=No CONFIRM=WIPE ");
       display.setTextColor(SSD1306_WHITE);
+      break;
+
+    case TX_HISTORY:
+      display.setCursor(0, 0);
+      display.println("TX HISTORY");
+      display.println("---------------------");
+      if (!txHistoryFetchDone) {
+        display.setCursor(0, 25);
+        display.println("Fetching...");
+      } else if (!txHistoryUsingCache && tx_history_get_count() == 0) {
+        display.setCursor(0, 25);
+        display.println("No transaction data");
+        display.setCursor(0, 40);
+        display.println("Connect companion app");
+      } else {
+        tx_history_entry_t entry;
+        uint8_t count = tx_history_get_count();
+        if (count > 0 && tx_history_get_entry(txHistoryScrollIdx, &entry)) {
+          display.setCursor(0, 20);
+          if (entry.direction == '+') {
+            display.println("RECEIVED");
+          } else {
+            display.println("SENT");
+          }
+          display.setCursor(0, 28);
+          char btcBuf[24];
+          format_btc(entry.amount_sats, btcBuf, sizeof(btcBuf));
+          display.print(btcBuf);
+          display.println(" BTC");
+          display.setCursor(0, 36);
+          for (int i = 0; i < 4; i++) {
+            if (entry.txid[i] < 0x10) display.print('0');
+            display.print(entry.txid[i], HEX);
+          }
+          display.print("...");
+          for (int i = 28; i < 32; i++) {
+            if (entry.txid[i] < 0x10) display.print('0');
+            display.print(entry.txid[i], HEX);
+          }
+          display.setCursor(0, 44);
+          if (entry.confirmations == 0) {
+            display.println("UNCONFIRMED");
+          } else if (entry.confirmations >= 100) {
+            display.println("100+ confirmations");
+          } else {
+            display.print(entry.confirmations);
+            display.println(" confirmations");
+          }
+        }
+      }
+      if (txHistoryFetchDone) {
+        display.setCursor(0, 56);
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        uint8_t count = tx_history_get_count();
+        if (txHistoryUsingCache) {
+          display.print(" [BACK] (cached) ");
+        } else if (count > 1 && tx_history_get_count() > 0) {
+          char footer[22];
+          snprintf(footer, sizeof(footer), " %u/%u BACK=CONFIRM ",
+                   (unsigned)(txHistoryScrollIdx + 1), (unsigned)count);
+          display.print(footer);
+        } else {
+          display.print(" [BACK] ");
+        }
+        display.setTextColor(SSD1306_WHITE);
+      }
       break;
 
     case WATCHDOG_RECOVERY:

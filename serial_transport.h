@@ -12,11 +12,13 @@ extern "C" {
 #define SERIAL_RECV_BUF_SIZE 8192
 
 typedef enum {
-    SERIAL_CMD_NONE    = 0,
-    SERIAL_CMD_PSBT    = 1,
-    SERIAL_CMD_VERIFY  = 2,
-    SERIAL_CMD_PAIRING = 3,
-    SERIAL_CMD_BALANCE = 4,
+    SERIAL_CMD_NONE        = 0,
+    SERIAL_CMD_PSBT        = 1,
+    SERIAL_CMD_VERIFY      = 2,
+    SERIAL_CMD_PAIRING     = 3,
+    SERIAL_CMD_BALANCE     = 4,
+    SERIAL_CMD_TX_HISTORY  = 5,
+    SERIAL_CMD_TX_ENTRY    = 6,
 } serial_cmd_t;
 
 typedef struct {
@@ -42,6 +44,8 @@ void serial_send_mismatch(void);
 void serial_send_pairing(const char *words);
 
 void serial_send_balance_request(const char *address);
+
+void serial_send_tx_history_request(const char *address);
 
 serial_msg_t serial_poll(void);
 

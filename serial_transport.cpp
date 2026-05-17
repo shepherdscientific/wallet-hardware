@@ -112,6 +112,16 @@ void serial_send_balance_request(const char *address) {
 #endif
 }
 
+void serial_send_tx_history_request(const char *address) {
+    if (!address) return;
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.print("TX_HISTORY:");
+    SERIAL_PORT.println(address);
+#else
+    printf("TX_HISTORY:%s\n", address);
+#endif
+}
+
 static serial_msg_t parse_line(const char *line, size_t line_len) {
     serial_msg_t msg;
     memset(&msg, 0, sizeof(msg));
@@ -151,6 +161,48 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
             memcpy(msg.data + 8, &unconf, 8);
             msg.cmd = SERIAL_CMD_BALANCE;
             msg.data_len = 16;
+        }
+    } else if (strncmp(line, "TX:", 3) == 0) {
+        const char *p = line + 3;
+        const char *end = line + line_len;
+        uint8_t txid_bytes[32];
+        int txid_pos = 0;
+        while (p < end && *p != ':' && txid_pos < 64) {
+            char hex_byte[3] = {0};
+            if (p + 1 < end && *p != ':') {
+                hex_byte[0] = *p;
+                hex_byte[1] = (p + 1 < end && *(p + 1) != ':') ? *(p + 1) : 0;
+                if (hex_byte[1]) {
+                    txid_bytes[txid_pos++] = (uint8_t)strtol(hex_byte, NULL, 16);
+                    p += 2;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        if (txid_pos == 32 && p < end && *p == ':') {
+            p++;
+            if (p < end) {
+                char dir = *p;
+                p++;
+                if (p < end && *p == ':') {
+                    p++;
+                    uint64_t amount = strtoull(p, NULL, 10);
+                    while (p < end && *p != ':') p++;
+                    if (p < end && *p == ':') {
+                        p++;
+                        uint32_t conf = (uint32_t)strtoul(p, NULL, 10);
+                        memcpy(msg.data, txid_bytes, 32);
+                        msg.data[32] = (uint8_t)dir;
+                        memcpy(msg.data + 33, &amount, 8);
+                        memcpy(msg.data + 41, &conf, 4);
+                        msg.cmd = SERIAL_CMD_TX_ENTRY;
+                        msg.data_len = 45;
+                    }
+                }
+            }
         }
     }
 
