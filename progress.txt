@@ -563,3 +563,18 @@ Patterns discovered:
 - Multisig participation check: derive child pubkey via SE (not hd_derive_pubkey), then linear scan witness/redeem script for OP_PUSH33/OP_PUSH65 + memcmp
 - Partial signing pattern: add partial_sig KV to PSBT without finalizing scriptsig/witness; existing signatures counted via multisig_existing_sigs field; device never finalizes multisig PSBTs
 - NO_PARTICIPANT vs unselected distinction: NO_PARTICIPANT only when at least one SELECTED input is owned AND signed_count == 0; unselected inputs that happen to be multisig-non-participant don't trigger the error
+
+### 2026-05-17: US-027 — Post-Quantum Status Screen (ML-KEM-512 Roadmap)
+- Enhanced existing PQC_STATUS screen from static 4-line display to scrollable 9-line detailed view
+- Added `pqcScrollOffset` state variable and `pqcLines[]` constant array with full PQC information:
+  - SE type: "NXP SE051C2", signature scheme: "secp256k1 ECDSA/Schnorr"
+  - 3-phase PQC roadmap: Phase 1 Classical (current), Phase 2 Hybrid ECDSA+ML-KEM-512 (planned), Phase 3 Full ML-KEM-512 (future)
+  - NIST standard: "FIPS 203: ML-KEM-512 standard" with "Status: Not yet implemented"
+  - Quantum risk timeline: "BTC quantum risk estimate: ~2030+ (per NIST timeline)"
+- CANCEL scrolls through 9 lines (wrapping via modulo), CONFIRM returns to main menu
+- 5 lines visible at a time on 128x64 OLED (18–58px content region at 8px per line)
+- Scroll offset reset to 0 on entry from main menu
+- Navigation separated from shared SHOW_BALANCE/TX_SUCCESS/TX_SIGN_ERROR handler
+- lastActivityMs updated on CANCEL scroll to prevent auto-lock during browsing
+- All 37 existing tests pass (7 watchdog, 10 settings, 12 account_manager, 8 coin_control)
+- 35 lines added, 9 removed in wallet1.ino

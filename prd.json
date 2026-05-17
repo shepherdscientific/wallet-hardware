@@ -579,8 +579,8 @@
         "Information is static/display-only; no interactive elements beyond BACK"
       ],
       "priority": 27,
-      "passes": false,
-      "notes": "This screen is informational. Real PQC signing is a future firmware upgrade requiring SE051C2 firmware update or a new SE. The screen sets correct user expectations."
+      "passes": true,
+      "notes": "Implementation complete. PQC_STATUS screen scrollable with CANCEL advancing through 9 lines of content: SE type, signature scheme, 3-phase roadmap (Classical → Hybrid → Full ML-KEM-512), FIPS 203 status, quantum risk timeline (2030+ per NIST). CONFIRM returns to main menu. 35 lines added, 9 removed. All 37 existing tests pass."
     },
     {
       "id": "US-028",
