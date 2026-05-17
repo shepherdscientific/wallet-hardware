@@ -16,6 +16,7 @@ typedef enum {
     SERIAL_CMD_PSBT    = 1,
     SERIAL_CMD_VERIFY  = 2,
     SERIAL_CMD_PAIRING = 3,
+    SERIAL_CMD_BALANCE = 4,
 } serial_cmd_t;
 
 typedef struct {
@@ -39,6 +40,8 @@ void serial_send_verified(void);
 void serial_send_mismatch(void);
 
 void serial_send_pairing(const char *words);
+
+void serial_send_balance_request(const char *address);
 
 serial_msg_t serial_poll(void);
 

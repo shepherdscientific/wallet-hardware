@@ -25,6 +25,7 @@
 #include "settings.h"
 #include "version.h"
 #include "watchdog.h"
+#include "balance.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -198,6 +199,15 @@ bool psbtFromUsb = false;
 bool txInputSelected[PSBT_MAX_INPUTS];
 uint8_t coinControlScrollIdx;
 uint8_t coinControlOwnedCount;
+
+// --- BALANCE STATE ---
+unsigned long balanceFetchStartMs = 0;
+uint64_t balanceConfirmed   = 0;
+uint64_t balanceUnconfirmed = 0;
+uint8_t  balanceResponsesExpected = 0;
+uint8_t  balanceResponsesReceived = 0;
+bool     balanceFetchDone   = false;
+bool     balanceUsingCache  = false;
 
 // --- PQC STATE ---
 uint8_t pqcScrollOffset = 0;
@@ -487,6 +497,7 @@ void setup() {
   account_init();
 
   settings_init();
+  balance_init();
   display.ssd1306_command(SSD1306_SETCONTRAST);
   display.ssd1306_command(settings_get_contrast());
 
@@ -555,6 +566,28 @@ void loop() {
       verifyMatchResult = (strcmp(currentAddressStr, verifyReceivedAddr) == 0);
       verifyResultEnteredMs = millis();
       currentState = verifyMatchResult ? VERIFY_MATCH : VERIFY_MISMATCH;
+    }
+  }
+
+  if (currentState == SHOW_BALANCE && !balanceFetchDone) {
+    serial_msg_t msg = serial_poll();
+    if (msg.cmd == SERIAL_CMD_BALANCE && msg.data_len >= 16) {
+      uint64_t conf, unconf;
+      memcpy(&conf, msg.data, 8);
+      memcpy(&unconf, msg.data + 8, 8);
+      balanceConfirmed += conf;
+      balanceUnconfirmed += unconf;
+      balanceResponsesReceived++;
+    }
+    if (millis() - balanceFetchStartMs > 2000 ||
+        balanceResponsesReceived >= balanceResponsesExpected) {
+      balanceFetchDone = true;
+      if (balanceResponsesReceived > 0) {
+        balance_set_cached(balanceConfirmed, balanceUnconfirmed);
+      } else if (balance_has_cached()) {
+        balanceUsingCache = true;
+        balance_get_cached(&balanceConfirmed, &balanceUnconfirmed);
+      }
     }
   }
 
@@ -950,7 +983,29 @@ void handleNavigation() {
       if (cancelPressed) {
         menuIndex = (menuIndex + 1) % TOTAL_MENU_ITEMS;
       } else if (confirmPressed) {
-        if (menuIndex == 0) currentState = SHOW_BALANCE;
+        if (menuIndex == 0) {
+          balanceFetchStartMs = millis();
+          balanceConfirmed = 0;
+          balanceUnconfirmed = 0;
+          balanceResponsesExpected = 0;
+          balanceResponsesReceived = 0;
+          balanceFetchDone = false;
+          balanceUsingCache = false;
+          uint32_t acct = account_get_active();
+          uint32_t maxIdx = 0;
+          account_get_address_index(acct, &maxIdx);
+          if (maxIdx > 5) maxIdx = 5;
+          char addrBuf[MAX_ADDRESS_LEN];
+          for (int t = 0; t < 3; t++) {
+            for (uint32_t i = 0; i <= maxIdx; i++) {
+              if (address_generate((address_type_t)t, acct, i, addrBuf)) {
+                serial_send_balance_request(addrBuf);
+                balanceResponsesExpected++;
+              }
+            }
+          }
+          currentState = SHOW_BALANCE;
+        }
         if (menuIndex == 1) {
           addressTypeIdx = 1;
           uint32_t acct = account_get_active();
@@ -1010,6 +1065,12 @@ void handleNavigation() {
       break;
 
     case SHOW_BALANCE:
+      lastActivityMs = millis();
+      if (balanceFetchDone && (cancelPressed || confirmPressed)) {
+        currentState = MAIN_MENU;
+      }
+      break;
+
     case TX_SUCCESS:
     case TX_SIGN_ERROR:
       if (cancelPressed || confirmPressed) {
@@ -1346,6 +1407,7 @@ void handleNavigation() {
         wallet_factory_reset();
         settings_nvs_erase();
         account_nvs_erase();
+        balance_nvs_erase();
         currentState = WALLET_WIPED;
         lastActivityMs = millis();
       } else if (cancelPressed) {
@@ -1702,16 +1764,57 @@ void renderCurrentState() {
       display.setCursor(0, 0);
       display.println("WALLET BALANCE");
       display.println("---------------------");
-      display.setCursor(0, 20);
-      display.setTextSize(2);
-      display.print("0.42050");
-      display.setTextSize(1);
-      display.println(" BTC");
-      display.setCursor(0, 42);
-      display.println("Sats: 42,050,000");
-      display.setCursor(0, 56);
-      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-      display.print(" [BACK] ");
+      if (!balanceFetchDone) {
+        display.setCursor(0, 25);
+        display.println("Fetching...");
+      } else if (balanceResponsesReceived == 0 && !balanceUsingCache) {
+        display.setCursor(0, 25);
+        display.println("No balance data");
+        display.setCursor(0, 40);
+        display.println("Connect companion app");
+      }
+#ifdef MOCK_DATA
+      else if (balanceResponsesReceived == 0 && !balanceUsingCache) {
+        display.setCursor(0, 20);
+        display.setTextSize(2);
+        display.print("0.42050");
+        display.setTextSize(1);
+        display.println(" BTC");
+        display.setCursor(0, 42);
+        display.println("Sats: 42,050,000");
+      }
+#endif
+      else {
+        display.setCursor(0, 20);
+        display.setTextSize(2);
+        char btcBuf[24];
+        format_btc(balanceConfirmed, btcBuf, sizeof(btcBuf));
+        display.print(btcBuf);
+        display.setTextSize(1);
+        display.println(" BTC");
+        display.setCursor(0, 42);
+        char satsBuf[32];
+        format_sats(balanceConfirmed, satsBuf, sizeof(satsBuf));
+        display.print("Sats: ");
+        display.println(satsBuf);
+        if (balanceUnconfirmed > 0) {
+          display.setCursor(0, 50);
+          display.print("+ ");
+          char unconBuf[24];
+          format_sats(balanceUnconfirmed, unconBuf, sizeof(unconBuf));
+          display.print(unconBuf);
+          display.println(" unconf.");
+        }
+      }
+      if (balanceFetchDone) {
+        display.setCursor(0, 56);
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        if (balanceUsingCache) {
+          display.print(" [BACK] (cached) ");
+        } else {
+          display.print(" [BACK] ");
+        }
+      }
       break;
 
     case SHOW_ADDRESS:

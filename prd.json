@@ -601,8 +601,8 @@
         "Hardcoded mock balance removed from production builds; only present under -DMOCK_DATA flag"
       ],
       "priority": 28,
-      "passes": false,
-      "notes": "The device itself has no network access in production mode. Balance is always fetched from the companion app or cached. The companion app is responsible for querying an Electrum server or block explorer API."
+      "passes": true,
+      "notes": "Implementation complete. balance.h/cpp module with NVS cache (Confirmed/Unconfirmed sats, last_sync timestamp) and dual-backend pattern. serial_transport extended with SERIAL_CMD_BALANCE, BALANCE_REQUEST send and BALANCE:conf:unconf parse. wallet1.ino SHOW_BALANCE fetches live balance via USB CDC per-address queries (0..MIN(N,5) for all 3 address types), 2s timeout fallback to cached NVS balance with (cached) label. Hardcoded mock removed (behind MOCK_DATA guard). 11 dedicated unit tests pass."
     },
     {
       "id": "US-029",

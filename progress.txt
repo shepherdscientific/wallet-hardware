@@ -578,3 +578,22 @@ Patterns discovered:
 - lastActivityMs updated on CANCEL scroll to prevent auto-lock during browsing
 - All 37 existing tests pass (7 watchdog, 10 settings, 12 account_manager, 8 coin_control)
 - 35 lines added, 9 removed in wallet1.ino
+
+### 2026-05-17: US-028 — Wallet Balance Display (Live via Companion App)
+- Created balance.h/cpp module with NVS cache using dual-backend pattern (ESP32 Preferences / host stub)
+  - NVS namespace "balance" with keys: conf_sats (uint64), unconf_sats (uint64), last_sync (uint32 timestamp)
+  - Functions: balance_init(), balance_has_cached(), balance_get_cached(), balance_set_cached(), balance_get_last_sync(), balance_nvs_erase()
+- Extended serial_transport with SERIAL_CMD_BALANCE = 4, serial_send_balance_request(address), and BALANCE:conf:unconf parser in parse_line()
+- Replaced hardcoded SHOW_BALANCE mock (now behind MOCK_DATA guard) with live USB balance fetching:
+  - On menu entry: queries address indices 0..MIN(N,5) for all 3 address types (P2PKH, P2WPKH, P2TR)
+  - Sends BALANCE_REQUEST:<address> over USB CDC for each address
+  - Polls USB in loop() for BALANCE:<confirmed>:<unconfirmed> responses, aggregates totals
+  - 2-second timeout; on completion caches to NVS and displays BTC/sats/unconfirmed
+  - Falls back to cached NVS balance with "(cached)" label if no USB responses
+  - Shows "No balance data" with "Connect companion app" hint when no cache and no USB
+- Added balance_nvs_erase() to factory reset flow alongside settings/account erase
+- Separated SHOW_BALANCE handler from shared TX_SUCCESS/TX_SIGN_ERROR handler
+- 11 unit tests for balance module (cache roundtrip, NULL safety, erase, large values, zero values, overwrite, unconfirmed isolation)
+- All 79 existing tests pass (11 balance + 10 settings + 12 account_manager + 7 watchdog + 8 coin_control + 19 tx_metadata + 12 multisig)
+- New files: balance.h (28 lines), balance.cpp (106 lines), test_balance.cpp (150 lines)
+- Modified: serial_transport.h (+2 lines), serial_transport.cpp (+21 lines), wallet1.ino (~100 lines changed)

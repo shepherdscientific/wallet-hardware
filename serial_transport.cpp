@@ -102,6 +102,16 @@ void serial_send_pairing(const char *words) {
 #endif
 }
 
+void serial_send_balance_request(const char *address) {
+    if (!address) return;
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.print("BALANCE_REQUEST:");
+    SERIAL_PORT.println(address);
+#else
+    printf("BALANCE_REQUEST:%s\n", address);
+#endif
+}
+
 static serial_msg_t parse_line(const char *line, size_t line_len) {
     serial_msg_t msg;
     memset(&msg, 0, sizeof(msg));
@@ -130,6 +140,17 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
             msg.data[words_len] = '\0';
             msg.cmd = SERIAL_CMD_PAIRING;
             msg.data_len = words_len;
+        }
+    } else if (strncmp(line, "BALANCE:", 8) == 0) {
+        uint64_t conf = 0, unconf = 0;
+        int n = sscanf(line + 8, "%llu:%llu",
+                       (unsigned long long *)&conf,
+                       (unsigned long long *)&unconf);
+        if (n >= 1) {
+            memcpy(msg.data, &conf, 8);
+            memcpy(msg.data + 8, &unconf, 8);
+            msg.cmd = SERIAL_CMD_BALANCE;
+            msg.data_len = 16;
         }
     }
 
