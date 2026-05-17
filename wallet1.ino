@@ -199,6 +199,21 @@ bool txInputSelected[PSBT_MAX_INPUTS];
 uint8_t coinControlScrollIdx;
 uint8_t coinControlOwnedCount;
 
+// --- PQC STATE ---
+uint8_t pqcScrollOffset = 0;
+static const uint8_t PQC_LINE_COUNT = 9;
+static const char* const pqcLines[] = {
+  "SE: NXP SE051C2",
+  "Sig: secp256k1 ECDSA/Schnorr",
+  "PQC Roadmap: Phase 1 (Classical)",
+  "Phase 2: Hybrid ECDSA+ML-KEM-512",
+  "Phase 3: Full ML-KEM-512",
+  "FIPS 203: ML-KEM-512 standard",
+  "Status: Not yet implemented",
+  "BTC quantum risk estimate:",
+  "~2030+ (per NIST timeline)"
+};
+
 // --- SETTINGS STATE ---
 uint8_t settingsMenuIdx = 0;
 const int SETTINGS_ITEM_COUNT = 6;
@@ -944,7 +959,7 @@ void handleNavigation() {
           currentState = SHOW_ADDRESS;
         }
         if (menuIndex == 2) currentState = SIGN_TX;
-        if (menuIndex == 3) currentState = PQC_STATUS;
+        if (menuIndex == 3) { pqcScrollOffset = 0; currentState = PQC_STATUS; }
         if (menuIndex == 4) {
           psbtFromUsb = false;
           initTransactionReview();
@@ -995,10 +1010,18 @@ void handleNavigation() {
       break;
 
     case SHOW_BALANCE:
-    case PQC_STATUS:
     case TX_SUCCESS:
     case TX_SIGN_ERROR:
       if (cancelPressed || confirmPressed) {
+        currentState = MAIN_MENU;
+      }
+      break;
+
+    case PQC_STATUS:
+      lastActivityMs = millis();
+      if (cancelPressed) {
+        pqcScrollOffset = (pqcScrollOffset + 1) % PQC_LINE_COUNT;
+      } else if (confirmPressed) {
         currentState = MAIN_MENU;
       }
       break;
@@ -1926,13 +1949,16 @@ void renderCurrentState() {
       display.setCursor(0, 0);
       display.println("POST-QUANTUM STATUS");
       display.println("---------------------");
-      display.setCursor(0, 18);
-      display.print("NIST PQC: "); display.println("ML-KEM-512");
-      display.print("Hardware: "); display.println("NXP SE051C2");
-      display.print("Sec Element: "); display.println("secp256k1");
-      display.setCursor(0, 52);
-      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-      display.print(" [BACK] ");
+      {
+        uint8_t visibleLines = 5;
+        for (uint8_t i = 0; i < visibleLines; i++) {
+          uint8_t li = (pqcScrollOffset + i) % PQC_LINE_COUNT;
+          display.setCursor(0, 18 + i * 8);
+          display.println(pqcLines[li]);
+        }
+      }
+      display.setCursor(0, 56);
+      display.print("CANCEL=scroll   CONFIRM=back");
       break;
 
     case TX_SUCCESS:
