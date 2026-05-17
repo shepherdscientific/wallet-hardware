@@ -622,8 +622,8 @@
         "Zero-confirmation incoming transactions shown with 'UNCONFIRMED' warning label"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": "Transaction history storage in NVS: 10 * ~100 bytes = 1 KB, well within NVS limits. txid stored as 32 bytes; display only truncated version."
+      "passes": true,
+      "notes": "Implementation complete. tx_history.h/cpp module with NVS cache (dual-backend ESP32 Preferences / host stub), LRU eviction (max 10 entries). Extended serial_transport with SERIAL_CMD_TX_ENTRY for TX:txid:dir:amount:conf parsing. Added TX_HISTORY state to wallet state machine with scrollable single-entry display (CANCEL=next, CONFIRM=back), USB fetch with 2s timeout, NVS cache fallback with (cached) label. Full acceptance criteria: RECEIVED/SENT header, BTC amount, txid (first 4+last 4 bytes hex), confirmations (UNCONFIRMED/100+/number). Factory reset integrates tx_history_nvs_erase(). 11 unit tests pass."
     },
     {
       "id": "US-030",

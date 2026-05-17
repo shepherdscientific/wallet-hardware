@@ -597,3 +597,30 @@ Patterns discovered:
 - All 79 existing tests pass (11 balance + 10 settings + 12 account_manager + 7 watchdog + 8 coin_control + 19 tx_metadata + 12 multisig)
 - New files: balance.h (28 lines), balance.cpp (106 lines), test_balance.cpp (150 lines)
 - Modified: serial_transport.h (+2 lines), serial_transport.cpp (+21 lines), wallet1.ino (~100 lines changed)
+
+### 2026-05-17: US-029 — Scrollable Transaction History Display
+- Created tx_history.h/cpp module with NVS cache using dual-backend pattern (ESP32 Preferences / host stub)
+  - NVS namespace "txhistory" with keys: count (uint8), txid_N (32 bytes blob), dir_N (uint8), amount_N (uint64), conf_N (uint32)
+  - Functions: tx_history_init(), tx_history_has_cached(), tx_history_get_count(), tx_history_get_entry(), tx_history_add_entry(), tx_history_nvs_erase()
+  - LRU eviction: max 10 entries, oldest shifted out when full
+- Extended serial_transport with SERIAL_CMD_TX_HISTORY = 5, SERIAL_CMD_TX_ENTRY = 6
+  - serial_send_tx_history_request(address) sends TX_HISTORY:<address> over USB CDC
+  - parse_line() handles TX:<txid_hex64>:<direction>:<amount_sats>:<confirmations> format
+  - Parser extracts 32-byte txid (from 64 hex chars), direction char, uint64 amount, uint32 confirmations
+- Added TX_HISTORY to WalletState enum, TOTAL_MENU_ITEMS = 9, menu item "9. TX History"
+- TX History fetch flow:
+  - On menu confirm: queries address indices 0..MIN(N,5) for all 3 address types
+  - Sends TX_HISTORY:<address> for each address, polls USB in loop() for TX: responses
+  - 2-second timeout; falls back to cached NVS history with "(cached)" label
+- TX History display (per entry, single OLED screen, CANCEL scrolls, CONFIRM returns):
+  - Header: RECEIVED (direction='+') or SENT (direction='-')
+  - BTC amount (via format_btc)
+  - TXID short (first 4 bytes + last 4 bytes hex, separated by "...")
+  - Confirmations: UNCONFIRMED (0), "N confirmations" (<100), "100+ confirmations" (>=100)
+  - Footer: "N/M BACK=CONFIRM" for multi-entry, "[BACK]" for single entry, "(cached)" when NVS fallback
+- Added tx_history_nvs_erase() to factory reset flow alongside balance/account/settings erase
+- Added TX_HISTORY to auto-lock/auto-dim state cluster
+- 11 unit tests (add/get, direction, confirmations, LRU eviction, NULL safety, OOB, erase, re-init, large values)
+- All 90 existing tests pass (11 tx_history + 11 balance + 10 settings + 12 account_manager + 7 watchdog + 8 coin_control + 19 tx_metadata + 12 multisig)
+- New files: tx_history.h (48 lines), tx_history.cpp (157 lines), test_tx_history.cpp (168 lines)
+- Modified: serial_transport.h (+5 lines), serial_transport.cpp (+52 lines), wallet1.ino (+143 lines)
