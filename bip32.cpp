@@ -86,14 +86,31 @@ static void u256_to_be(const uint64_t *a, uint8_t b[32]) {
   }
 }
 
+// Portable 64x64 → 128 multiply (no __uint128_t on 32-bit Xtensa)
+static void mul64x64(uint64_t a, uint64_t b, uint64_t *lo, uint64_t *hi) {
+  uint64_t al = (uint32_t)a;
+  uint64_t ah = a >> 32;
+  uint64_t bl = (uint32_t)b;
+  uint64_t bh = b >> 32;
+  uint64_t p0 = al * bl;
+  uint64_t p1 = ah * bl;
+  uint64_t p2 = al * bh;
+  uint64_t p3 = ah * bh;
+  uint64_t mid = p1 + p2;
+  uint64_t carry = (mid < p1);
+  uint64_t mid_lo = mid << 32;
+  uint64_t mid_hi = (mid >> 32) | (carry << 32);
+  *lo = p0 + mid_lo;
+  *hi = p3 + mid_hi + ((*lo < p0) ? 1 : 0);
+}
+
 // 256x256 → 512 multiplication
 static void u512_mul(uint64_t r[8], const uint64_t a[4], const uint64_t b[4]) {
   memset(r, 0, 64);
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
-      __uint128_t prod = (__uint128_t)a[i] * (__uint128_t)b[j];
-      uint64_t lo = (uint64_t)prod;
-      uint64_t hi = (uint64_t)(prod >> 64);
+      uint64_t lo, hi;
+      mul64x64(a[i], b[j], &lo, &hi);
       int k = i + j;
       lo += r[k];
       hi += (lo < r[k]) ? 1 : 0;
@@ -164,9 +181,8 @@ static void secp_reduce(uint64_t r[4], const uint64_t a[8]) {
 
   // Step 3: add c1 * 977
   for (int i = 0; i < 4; i++) {
-    __uint128_t prod = (__uint128_t)a[4 + i] * 977ULL;
-    uint64_t lo = (uint64_t)prod;
-    uint64_t hi = (uint64_t)(prod >> 64);
+    uint64_t lo, hi;
+    mul64x64(a[4 + i], 977ULL, &lo, &hi);
     int k = i;
     lo += sum8[k];
     hi += (lo < sum8[k]) ? 1 : 0;
@@ -212,9 +228,8 @@ static void secp_reduce(uint64_t r[4], const uint64_t a[8]) {
 
     // Add high word * 977
     for (int i = 0; i < 4 && (i + 4) < 8; i++) {
-      __uint128_t prod = (__uint128_t)sum8[4 + i] * 977ULL;
-      uint64_t lo = (uint64_t)prod;
-      uint64_t hi = (uint64_t)(prod >> 64);
+      uint64_t lo, hi;
+      mul64x64(sum8[4 + i], 977ULL, &lo, &hi);
       int k = i;
       lo += r2[k];
       hi += (lo < r2[k]) ? 1 : 0;
@@ -346,9 +361,8 @@ static void n_mod_mul(uint64_t r[4], const uint64_t a[4], const uint64_t b[4]) {
   memset(qn_prod, 0, sizeof(qn_prod));
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
-      __uint128_t pr = (__uint128_t)q_est[i] * (__uint128_t)SECP_N[j];
-      uint64_t lo = (uint64_t)pr;
-      uint64_t hi = (uint64_t)(pr >> 64);
+      uint64_t lo, hi;
+      mul64x64(q_est[i], SECP_N[j], &lo, &hi);
       int k2 = i + j;
       lo += qn_prod[k2];
       hi += (lo < qn_prod[k2]) ? 1 : 0;
@@ -404,7 +418,8 @@ static void ec_double(ec_pt *r, const ec_pt *p) {
   // s = 3x^2 / 2y mod P
   uint64_t x2[4], three_x2[4], two_y[4], two_y_inv[4], s[4];
   secp_mod_mul(x2, px, px);
-  secp_mod_mul(three_x2, x2, (uint64_t[4]){3,0,0,0});
+  uint64_t three[4] = {3, 0, 0, 0};
+  secp_mod_mul(three_x2, x2, three);
   secp_mod_add(two_y, py, py);
   secp_mod_inv(two_y_inv, two_y);
   secp_mod_mul(s, three_x2, two_y_inv);
@@ -494,7 +509,8 @@ static bool pubkey_to_ec(const uint8_t pk[33], ec_pt *p) {
   uint64_t x3[4], rhs[4];
   secp_mod_mul(x3, p->x, p->x);
   secp_mod_mul(x3, x3, p->x);
-  secp_mod_add(rhs, x3, (uint64_t[4]){7,0,0,0});
+  uint64_t seven[4] = {7, 0, 0, 0};
+  secp_mod_add(rhs, x3, seven);
 
   // y = rhs^((P+1)/4) mod P  (since P ≡ 3 mod 4)
   uint64_t one[4] = {1,0,0,0};

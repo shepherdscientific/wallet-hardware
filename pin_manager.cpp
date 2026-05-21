@@ -31,7 +31,7 @@ bool pin_setup(const uint8_t pin[PIN_LEN]) {
   uint8_t uid[DEVICE_UID_LEN];
   pin_get_device_uid(uid);
   uint8_t hash[HMAC_SHA256_OUTPUT_SIZE];
-  hmac_sha256(uid, DEVICE_UID_LEN, pin, PIN_LEN, hash);
+  cc_hmac_sha256(uid, DEVICE_UID_LEN, pin, PIN_LEN, hash);
 
   se051_err_t err = se051_store_key(SE051_OBJ_PIN_HASH, hash, HMAC_SHA256_OUTPUT_SIZE);
 
@@ -58,7 +58,7 @@ bool pin_verify(const uint8_t pin[PIN_LEN]) {
   uint8_t uid[DEVICE_UID_LEN];
   pin_get_device_uid(uid);
   uint8_t computed_hash[HMAC_SHA256_OUTPUT_SIZE];
-  hmac_sha256(uid, DEVICE_UID_LEN, pin, PIN_LEN, computed_hash);
+  cc_hmac_sha256(uid, DEVICE_UID_LEN, pin, PIN_LEN, computed_hash);
 
   secure_zero(uid, DEVICE_UID_LEN);
 

@@ -7,7 +7,7 @@ typedef struct {
   uint64_t bitlen;
 } ripemd160_ctx_internal;
 
-_Static_assert(sizeof(ripemd160_ctx) >= sizeof(ripemd160_ctx_internal),
+static_assert(sizeof(ripemd160_ctx) >= sizeof(ripemd160_ctx_internal),
                "ripemd160_ctx too small");
 
 #define ROL32(x, n) (((x) << (n)) | ((x) >> (32 - (n))))

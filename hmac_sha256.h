@@ -11,7 +11,7 @@ extern "C" {
 #define HMAC_SHA256_BLOCK_SIZE 64
 #define HMAC_SHA256_OUTPUT_SIZE 32
 
-void hmac_sha256(const uint8_t *key, size_t key_len,
+void cc_hmac_sha256(const uint8_t *key, size_t key_len,
                  const uint8_t *msg, size_t msg_len,
                  uint8_t mac[HMAC_SHA256_OUTPUT_SIZE]);
 

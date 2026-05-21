@@ -2343,7 +2343,7 @@ void renderCurrentState() {
       display.print("CANCEL=cycle CONFIRM=select");
       break;
 
-    case ACCOUNT_RENAME:
+    case ACCOUNT_RENAME: {
       display.setCursor(0, 0);
       {
         uint32_t cur = account_get_active();
@@ -2374,7 +2374,7 @@ void renderCurrentState() {
       display.print("/6");
       display.setCursor(0, 56);
       display.print("CANCEL=cycle CONFIRM=select");
-      break;
+      } break;
 
     case SETTINGS_MENU:
       display.setCursor(0, 0);
@@ -2440,7 +2440,7 @@ void renderCurrentState() {
       display.print("CANCEL=cycle CONFIRM=save");
       break;
 
-    case SETTINGS_CONTRAST:
+    case SETTINGS_CONTRAST: {
       display.setCursor(0, 0);
       display.println("DISPLAY CONTRAST");
       display.println("---------------------");
@@ -2455,7 +2455,7 @@ void renderCurrentState() {
       display.fillRect(2, 42, barW, 6, SSD1306_WHITE);
       display.setCursor(0, 56);
       display.print("CANCEL= <  CONFIRM= >");
-      break;
+      } break;
 
     case SETTINGS_CHANGE_PIN_OLD:
       display.setCursor(0, 0);

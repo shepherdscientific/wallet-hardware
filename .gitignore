@@ -22,6 +22,8 @@ test_base64
 build/
 bin/
 out/
+.pio/
+.pioenvs/
 
 # IDE Specific Files (Arduino IDE 2.x and Visual Studio)
 .arduino/
