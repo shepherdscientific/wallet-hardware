@@ -40,4 +40,15 @@ scripts/*/
 opencode.json
 .env.*
 
+# Python Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.Python
+
 .aider*
