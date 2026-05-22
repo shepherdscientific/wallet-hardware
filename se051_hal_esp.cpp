@@ -127,8 +127,7 @@ static se051_err_t apdu_send_recv(const uint8_t *apdu,
 // ─── Public HAL Implementation ───────────────────────────────────────────
 
 se051_err_t se051_init(void) {
-  Wire.begin(8, 9);
-  Wire.setClock(400000);
+  Wire.setTimeOut(50);
 
   uint8_t select_apdu[] = { 0x00, 0xA4, 0x04, 0x00, 0x00 };
   se051_err_t err = i2c_write(SE051_I2C_ADDR, select_apdu, sizeof(select_apdu));

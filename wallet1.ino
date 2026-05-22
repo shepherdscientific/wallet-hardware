@@ -93,6 +93,7 @@ enum WalletState {
   WATCHDOG_RECOVERY
 };
 WalletState currentState = PIN_SETUP;
+bool seAvailable = false;
 
 int menuIndex = 0;
 const int TOTAL_MENU_ITEMS = 9;
@@ -475,33 +476,17 @@ void setup() {
   Serial.begin(115200);
   serial_init();
   Wire.begin(SDA_PIN, SCL_PIN);
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) for(;;);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    display.begin(SSD1306_EXTERNALVCC, 0x3C);
+  }
 
   pinMode(BTN_CONFIRM, INPUT_PULLUP);
   pinMode(BTN_CANCEL, INPUT_PULLUP);
 
   showBootSplash();
 
-#ifdef DEV_BUILD
-  WiFi.begin(ssid, password);
-  int timeout = 0;
-  while (WiFi.status() != WL_CONNECTED && timeout < 8) {
-    delay(500);
-    timeout++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    ArduinoOTA.setHostname("coincube-wallet");
-    ArduinoOTA.setPassword("cube526");
-    ArduinoOTA.begin();
-    Serial.println("OTA Active");
-  }
-#else
-  esp_wifi_stop();
-  esp_wifi_deinit();
-#endif
-
-  se051_init();
+  // seAvailable = (se051_init() == SE_OK);  // re-enable when SE connected
+  seAvailable = false;
 
   watchdog_init();
 
@@ -523,7 +508,9 @@ void setup() {
     return;
   }
 
-  if (pin_is_set()) {
+  if (!seAvailable) {
+    currentState = BOOT_MENU;
+  } else if (pin_is_set()) {
     currentState = PIN_ENTRY;
     pinAttempts = pin_get_attempts();
     pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
@@ -742,7 +729,8 @@ void handleNavigation() {
       if (cancelPressed) {
         menuIndex = (menuIndex + 1) % 2;
       } else if (confirmPressed) {
-        if (menuIndex == 0) {
+        if (!seAvailable) {
+        } else if (menuIndex == 0) {
           startMnemonicCeremony();
         } else {
           startRestoreProcess();
@@ -1490,12 +1478,16 @@ void handleNavigation() {
 
     case WATCHDOG_RECOVERY:
       if (confirmPressed || cancelPressed) {
-        currentState = PIN_ENTRY;
-        pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
-        pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
-        pinPosition = 0;
-        pinDigitValue = 0;
-        pinAttempts = pin_get_attempts();
+        if (!seAvailable) {
+          currentState = BOOT_MENU;
+        } else {
+          currentState = PIN_ENTRY;
+          pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+          pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+          pinPosition = 0;
+          pinDigitValue = 0;
+          pinAttempts = pin_get_attempts();
+        }
       }
       break;
 
@@ -1570,7 +1562,11 @@ void renderCurrentState() {
       }
       display.setTextColor(SSD1306_WHITE);
       display.setCursor(0, 56);
-      display.print("CANCEL=cycle CONFIRM=select");
+      if (!seAvailable) {
+        display.print("No Secure Element");
+      } else {
+        display.print("CANCEL=cycle CONFIRM=select");
+      }
       break;
 
     case MNEMONIC_DISPLAY:
@@ -2677,8 +2673,13 @@ void renderCurrentState() {
       display.setCursor(0, 24);
       display.println("Unexpected restart.");
       display.setCursor(0, 36);
-      display.println("Re-enter PIN to");
-      display.println("continue.");
+      if (!seAvailable) {
+        display.println("No Secure Element");
+        display.println("detected.");
+      } else {
+        display.println("Re-enter PIN to");
+        display.println("continue.");
+      }
       display.setCursor(0, 56);
       display.print("Any button to continue");
       break;
