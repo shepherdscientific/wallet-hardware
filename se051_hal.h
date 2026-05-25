@@ -11,14 +11,20 @@ extern "C" {
 // ─── Compile-time HAL selection ───────────────────────────────────────────
 #if defined(USE_SE051)
   #define SE051_HAL_ACTIVE 1
+#elif defined(USE_ATECC608B)
+  #define SE051_HAL_ACTIVE 1
 #elif defined(USE_SE_STUB)
   #define SE051_HAL_ACTIVE 1
 #else
-  #error "Define either USE_SE051 or USE_SE_STUB build flag"
+  #error "Define USE_SE051, USE_ATECC608B, or USE_SE_STUB build flag"
 #endif
 
 // ─── I2C Constants ───────────────────────────────────────────────────────
-#define SE051_I2C_ADDR        0x48
+#ifdef USE_ATECC608B
+  #define SE051_I2C_ADDR        0x64  // this chip's programmed 7-bit address
+#else
+  #define SE051_I2C_ADDR        0x48
+#endif
 #define SE051_I2C_RETRY_COUNT 3
 #define SE051_I2C_RETRY_MS    50
 
