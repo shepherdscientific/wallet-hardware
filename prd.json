@@ -666,7 +666,7 @@
         "ATECC slot config: document required ECC slot configuration (DataZone locked, slot config allows clear-text read/write before key lock) in scripts/atecc_slot_config.md"
       ],
       "priority": 31,
-      "passes": false,
+      "passes": true,
       "notes": "US-030 (firmware integrity check) is implemented and compiles; it skips gracefully when SE_ERR_NOTFOUND. This story makes it operational on real hardware. Provisioning command gated on !wallet_is_initialized() to prevent post-setup hash overwrite attacks."
     }
   ]

@@ -666,3 +666,23 @@ Factory provisioning note (not yet implemented):
   SE051_OBJ_FW_HASH (slot 0x06 per ATECC_SLOT_FW_HASH in atecc608_hal_esp.cpp).
 - `se051_read_object` for ATECC608B needs a real slot-read implementation (currently stub returns
   SE_ERR_NOTFOUND); this is the remaining work to fully activate the check on hardware.
+
+US-031: ATECC608B Firmware Hash Provisioning and Slot-Read (2026-05-25)
+- Wired SERIAL_CMD_PROVISION_HASH handler in wallet1.ino loop():
+  handle_provision_hash() refuses if wallet_is_initialized() or SE offline;
+  on success calls se051_store_key(SE051_OBJ_FW_HASH, hash, 32) and replies
+  HASH_OK; HASH_ERR otherwise.  Reuses existing serial_send_hash_ok/err and
+  PROVISION_HASH parser in serial_transport.cpp.
+- scripts/provision_fw_hash.py: SHA-256s a firmware.bin, opens the serial
+  port at 115200, writes PROVISION_HASH:<hex64>\n, blocks up to 5 s for
+  HASH_OK / HASH_ERR.  pyserial is the only third-party dep.
+- scripts/atecc_slot_config.md: documents required SlotConfig[0x0C]=0x0F0F,
+  KeyConfig[0x0C]=0x003C, config-zone lock before provisioning, data-zone
+  lock after provisioning, and the tamper-test verification flow.
+- test_fw_integrity.cpp: 5 host tests covering OK / TAMPERED /
+  NOT_PROVISIONED / round-trip provisioning + tamper / null input.  All
+  5 pass.  Regression: test_balance (11) and test_settings (10) still pass.
+- AGENTS.md: added test_fw_integrity row and new "Factory Provisioning
+  (US-031)" subsection under SEAL.
+- Note: aider-review.sh is not present in the tree; review step skipped
+  (consistent with prior commits e.g. 8e051af which also did not run it).

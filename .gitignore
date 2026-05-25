@@ -16,6 +16,7 @@ test_psbt_signer
 test_psbt_serialize
 test_serial_transport
 test_base64
+test_fw_integrity
 
 # Build Folders
 # These are generated during compilation and shouldn't be tracked

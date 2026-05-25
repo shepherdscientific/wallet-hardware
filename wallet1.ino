@@ -203,8 +203,32 @@ void setup() {
   display.display();
 }
 
+// ─── US-031: Factory provisioning handler ────────────────────────────────
+//
+// Handles a single line of PROVISION_HASH:<64-hex-chars> arriving over USB
+// CDC.  The command is rejected after the wallet is set up so a post-setup
+// attacker cannot overwrite the stored firmware hash and bypass US-030's
+// tamper detection.  Reply is the single token "HASH_OK" on success or
+// "HASH_ERR" on any failure (wallet already initialized, SE offline, or
+// SE write rejected).
+static void handle_provision_hash(const uint8_t *hash32) {
+  if (!hash32 || wallet_is_initialized() || !seAvailable) {
+    serial_send_hash_err();
+    return;
+  }
+  se051_err_t rc = se051_store_key(SE051_OBJ_FW_HASH, hash32, 32);
+  if (rc == SE_OK) serial_send_hash_ok();
+  else             serial_send_hash_err();
+}
+
 void loop() {
   watchdog_feed();
+
+  serial_msg_t msg = serial_poll();
+  if (msg.cmd == SERIAL_CMD_PROVISION_HASH && msg.data_len == 32) {
+    handle_provision_hash(msg.data);
+  }
+
   bool c = (digitalRead(1) == LOW);
   bool l = (digitalRead(2) == LOW);
   if (c || l) {

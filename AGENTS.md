@@ -41,6 +41,7 @@ g++ -DUSE_SE_STUB -std=c++11 -I. <sources...> test_*.cpp -o test_*
 | `test_coin_control` | `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp wallet_storage.cpp psbt_signer.cpp test_coin_control.cpp -o test_coin_control` |
 | `test_multisig` | `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp wallet_storage.cpp psbt_signer.cpp test_multisig.cpp -o test_multisig` |
 | `test_tx_metadata` | `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp wallet_storage.cpp test_tx_metadata.cpp -o test_tx_metadata` |
+| `test_fw_integrity` | `g++ -DUSE_SE_STUB -std=c++11 -I. se051_hal_stub.cpp fw_integrity.cpp test_fw_integrity.cpp -o test_fw_integrity` |
 
 Earlier test sources (`test_bip39`, `test_wallet_storage`, `test_bip32`, `test_address`, `test_pin_manager`, `test_psbt`, `test_psbt_signer`, `test_qr_renderer`) were deleted in commit `449db4e` — their sources are recoverable from git history if needed.
 
@@ -77,6 +78,14 @@ Dual-backend pattern used by `account_manager`, `settings`, `balance`, `tx_histo
 
 - Zero sensitive buffers with volatile pointer pattern after use: `volatile uint8_t *p = buf; while (len--) *p++ = 0;`
 - Partial SE state: if storing key A succeeds but key B fails, delete key A before returning error
+
+### Factory Provisioning (US-031)
+
+- `SE051_OBJ_FW_HASH` (object id `0x06`, ATECC slot `0x0C` via `map_key_id` in `atecc608_hal_esp.cpp`) holds the expected SHA-256 of the running firmware partition
+- Write path: `se051_store_key(SE051_OBJ_FW_HASH, hash, 32)` → `atecc_write_slot32` (Write opcode `0x12`, P1 `0x82`)
+- Wallet handler in `wallet1.ino` (`handle_provision_hash`) gates on `!wallet_is_initialized()` so the hash cannot be overwritten after setup, even over USB CDC
+- Host script: `python3 scripts/provision_fw_hash.py firmware.bin /dev/ttyACM0` sends `PROVISION_HASH:<hex64>\n`, expects `HASH_OK` (success) or `HASH_ERR`
+- Slot policy and lock order documented in `scripts/atecc_slot_config.md` — DataZone is locked after provisioning so further writes return `SE_ERR_LOCKED`
 
 ## Conventions
 
