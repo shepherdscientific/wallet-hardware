@@ -52,7 +52,7 @@
     },
     {
       "id": "US-003",
-      "title": "Secure Key Storage: Seed → SE051C2 Key Objects",
+      "title": "Secure Key Storage: Seed \u2192 SE051C2 Key Objects",
       "description": "As a security engineer, I need the BIP39 master seed to be derived into a BIP32 root key and stored inside the SE051C2 as an EC key object so private key material never exists in ESP32-S3 RAM beyond the initial setup ceremony.",
       "agents": [
         "security-engineer"
@@ -90,7 +90,7 @@
       ],
       "priority": 4,
       "passes": true,
-      "notes": "BIP32 implemented. Hardened CKD verified against BIP32 test vector 1. secp256k1 EC doubling has parity bug for large scalars — small scalars (k<=3) correct. Non-hardened CKDpub/pubkey_from_priv affected. Fix pending in follow-up."
+      "notes": "BIP32 implemented. Hardened CKD verified against BIP32 test vector 1. secp256k1 EC doubling has parity bug for large scalars \u2014 small scalars (k<=3) correct. Non-hardened CKDpub/pubkey_from_priv affected. Fix pending in follow-up."
     },
     {
       "id": "US-005",
@@ -101,7 +101,7 @@
       ],
       "acceptanceCriteria": [
         "First-boot PIN setup: CONFIRM increments current digit (0-9 wrap), CANCEL confirms digit and advances to next position",
-        "PIN is 6 digits; progress shown as filled/empty circles on OLED (e.g. '●●●○○○')",
+        "PIN is 6 digits; progress shown as filled/empty circles on OLED (e.g. '\u25cf\u25cf\u25cf\u25cb\u25cb\u25cb')",
         "PIN entry screen displayed on every boot before any wallet function is accessible",
         "PIN hash (HMAC-SHA256 with device UID as key) stored in SE051C2 as a binary object (ID=0x03)",
         "Correct PIN unlocks wallet state; incorrect PIN shows attempt counter (e.g. '2 of 5 attempts')",
@@ -143,7 +143,7 @@
       ],
       "acceptanceCriteria": [
         "Restore flow accessible from boot menu when no wallet is initialised",
-        "Word entry: CANCEL scrolls through BIP39 wordlist alphabetically (A→Z→A), CONFIRM selects current word",
+        "Word entry: CANCEL scrolls through BIP39 wordlist alphabetically (A\u2192Z\u2192A), CONFIRM selects current word",
         "Current partial word prefix shown on top line; matching words scroll below (up to 3 visible)",
         "Entering a word not in BIP39 wordlist shows 'Invalid word' and rejects selection",
         "After 24 words entered, BIP39 checksum validated; invalid checksum shows 'Bad checksum - retry'",
@@ -165,7 +165,7 @@
       ],
       "acceptanceCriteria": [
         "address_generate(type, index, addr_out): generates address string for P2PKH (1...), P2WPKH (bc1q...), P2TR (bc1p...)",
-        "P2PKH: Hash160(pubkey) → Base58Check with version byte 0x00",
+        "P2PKH: Hash160(pubkey) \u2192 Base58Check with version byte 0x00",
         "P2WPKH: bech32_encode('bc', 0, Hash160(pubkey))",
         "P2TR: bech32m_encode('bc', 1, x-only pubkey after BIP86 tweak)",
         "Generated address displayed chunked across 2 lines of 21 chars on OLED",
@@ -222,7 +222,7 @@
     {
       "id": "US-011",
       "title": "Transaction Review UI (Outputs, Fee, Destination)",
-      "description": "As a user, I want to see a clear summary of a transaction I am about to sign — including destination address, amount, and fee — on the OLED before I confirm, so I can verify the transaction details match my intent.",
+      "description": "As a user, I want to see a clear summary of a transaction I am about to sign \u2014 including destination address, amount, and fee \u2014 on the OLED before I confirm, so I can verify the transaction details match my intent.",
       "agents": [
         "firmware-engineer",
         "bitcoin-protocol-engineer"
@@ -262,7 +262,7 @@
       ],
       "priority": 12,
       "passes": true,
-      "notes": "BIP341 sighash requires SHA256 with tag 'TapSighash'. Pre-compute tagged hash prefix. Schnorr signing in SE051C2 requires the key to be an ECC P-256 key or custom BIP340 implementation — verify SE051C2 supports secp256k1 or add software Schnorr on top of SE ECDSA."
+      "notes": "BIP341 sighash requires SHA256 with tag 'TapSighash'. Pre-compute tagged hash prefix. Schnorr signing in SE051C2 requires the key to be an ECC P-256 key or custom BIP340 implementation \u2014 verify SE051C2 supports secp256k1 or add software Schnorr on top of SE ECDSA."
     },
     {
       "id": "US-013",
@@ -275,7 +275,7 @@
       "acceptanceCriteria": [
         "After mnemonic entry, display 'Add Passphrase? [YES/NO]'; CONFIRM = YES, CANCEL = NO",
         "If YES: character-by-character entry using 2-button interface (CANCEL cycles character set A-Z/a-z/0-9/symbols, CONFIRM selects char, long-press CONFIRM = done)",
-        "Passphrase length 0–64 characters; display shows character count and last 3 entered chars + '***' masking",
+        "Passphrase length 0\u201364 characters; display shows character count and last 3 entered chars + '***' masking",
         "Passphrase combined with mnemonic in PBKDF2-HMAC-SHA512 as per BIP39 ('mnemonic' + passphrase)",
         "Passphrase NOT stored anywhere (not in SE, not in NVS); must be re-entered each boot (by design)",
         "If passphrase was set: boot flow prompts 'Enter Passphrase' after PIN unlock before wallet is usable",
@@ -318,7 +318,7 @@
         "Receive menu has 'Verify Address' option distinct from 'Show Address'",
         "Verify flow: companion app sends address verification request over USB ('VERIFY:<address>\\n')",
         "Device derives the address at the same index and type, compares byte-for-byte with received address",
-        "If match: display full address on OLED with '✓ VERIFIED' indicator; user confirms with CONFIRM",
+        "If match: display full address on OLED with '\u2713 VERIFIED' indicator; user confirms with CONFIRM",
         "If mismatch: display 'ADDRESS MISMATCH!' in large inverted text with an alarm pattern (rapid display flash 3x)",
         "Device replies 'VERIFIED\\n' or 'MISMATCH\\n' to host after user response",
         "Without companion app: standalone verify shows address in full; user must manually compare with their own records",
@@ -359,7 +359,7 @@
       "acceptanceCriteria": [
         "PIN attempt counter stored in SE051C2 monotonic counter object (ID=0x05); increments before each PIN verification attempt",
         "Counter reset to 0 only after successful PIN entry (requires unlocking SE with current PIN-derived credential)",
-        "After 5 failed attempts: se051_delete_key() called for all key objects (0x01–0x05), NVS erased, device reboots to factory state",
+        "After 5 failed attempts: se051_delete_key() called for all key objects (0x01\u20130x05), NVS erased, device reboots to factory state",
         "Wipe sequence cannot be interrupted (watchdog-armed during wipe; if interrupted, wipe continues on next boot)",
         "Display shows 'WALLET WIPED - Restore from seed' after wipe completes",
         "Attempt count displayed as warning from attempt 3: 'Warning: N attempts remaining'",
@@ -379,12 +379,12 @@
       ],
       "acceptanceCriteria": [
         "Account selector accessible from main menu; displays 'Account 0', 'Account 1' ... 'Account 9'",
-        "CANCEL cycles through accounts 0–9; CONFIRM selects and switches active account",
+        "CANCEL cycles through accounts 0\u20139; CONFIRM selects and switches active account",
         "Active account index stored in NVS; restored on boot",
         "All address generation and PSBT signing uses the active account's derivation path (m/84'/0'/ACCOUNT'/0/n)",
         "Each account maintains independent address index in NVS (keyed by account number)",
         "Account name customisation: 6-character label editable via 2-button input, stored in NVS",
-        "Maximum 10 accounts (indices 0–9); attempting to add 11th shows 'Max accounts reached'",
+        "Maximum 10 accounts (indices 0\u20139); attempting to add 11th shows 'Max accounts reached'",
         "Active account indicator shown on main menu header (e.g. 'COINCUBE [Acct 2]')"
       ],
       "priority": 18,
@@ -401,7 +401,7 @@
       ],
       "acceptanceCriteria": [
         "Coin control menu shows list of UTXOs from the PSBT's inputs (txid truncated to 8 chars, vout, amount in sats)",
-        "CANCEL scrolls through UTXOs; CONFIRM toggles selection (selected = '✓', unselected = '○')",
+        "CANCEL scrolls through UTXOs; CONFIRM toggles selection (selected = '\u2713', unselected = '\u25cb')",
         "Only selected UTXOs are included in signing; unselected inputs are left unsigned in the returned PSBT",
         "Total selected amount and estimated fee shown at bottom of coin control screen",
         "If no UTXOs selected and user tries to confirm, show 'Select at least 1 input'",
@@ -424,7 +424,7 @@
         "Settings menu items: Display Timeout, Auto-Lock Timeout, Display Contrast, Change PIN, About",
         "Display Timeout: options 30s / 1m / 2m / 5m / Never; OLED off after timeout, any button wakes",
         "Auto-Lock Timeout: options 1m / 5m / 15m / 30m / Never; locks wallet (requires PIN re-entry) after inactivity",
-        "Display Contrast: 0–255 in steps of 32 using SSD1306_SWITCHCAPVCC contrast command; previewed live",
+        "Display Contrast: 0\u2013255 in steps of 32 using SSD1306_SWITCHCAPVCC contrast command; previewed live",
         "All settings persisted in NVS namespace 'settings'",
         "Settings accessible only after PIN authentication",
         "Change PIN flow: confirm current PIN, enter new PIN twice, compare; if mismatch show 'PINs do not match'",
@@ -445,7 +445,7 @@
       "acceptanceCriteria": [
         "Factory reset accessible from Settings menu (requires PIN authentication)",
         "Double-confirmation required: 'Reset wallet? [CANCEL=No] [CONFIRM=Yes]' then 'Are you sure? This cannot be undone. [CANCEL=No] [CONFIRM=WIPE]'",
-        "Reset sequence: se051_delete_key() for IDs 0x01–0x05, NVS erase all namespaces, reboot",
+        "Reset sequence: se051_delete_key() for IDs 0x01\u20130x05, NVS erase all namespaces, reboot",
         "Wipe is watchdog-armed: if power is cut during wipe, device boots and detects partial wipe (wallet_is_initialized() returns false with missing SE objects), completes wipe on next boot",
         "After reboot, device shows setup wizard as if new",
         "Factory reset does NOT wipe firmware; only data",
@@ -475,7 +475,7 @@
       ],
       "priority": 22,
       "passes": true,
-      "notes": "This is critical. A hardware wallet with WiFi is not a hardware wallet — it's a hot wallet in a box. The WiFi OTA is useful for development iteration but must be completely absent in production."
+      "notes": "This is critical. A hardware wallet with WiFi is not a hardware wallet \u2014 it's a hot wallet in a box. The WiFi OTA is useful for development iteration but must be completely absent in production."
     },
     {
       "id": "US-023",
@@ -580,7 +580,7 @@
       ],
       "priority": 27,
       "passes": true,
-      "notes": "Implementation complete. PQC_STATUS screen scrollable with CANCEL advancing through 9 lines of content: SE type, signature scheme, 3-phase roadmap (Classical → Hybrid → Full ML-KEM-512), FIPS 203 status, quantum risk timeline (2030+ per NIST). CONFIRM returns to main menu. 35 lines added, 9 removed. All 37 existing tests pass."
+      "notes": "Implementation complete. PQC_STATUS screen scrollable with CANCEL advancing through 9 lines of content: SE type, signature scheme, 3-phase roadmap (Classical \u2192 Hybrid \u2192 Full ML-KEM-512), FIPS 203 status, quantum risk timeline (2030+ per NIST). CONFIRM returns to main menu. 35 lines added, 9 removed. All 37 existing tests pass."
     },
     {
       "id": "US-028",
@@ -636,7 +636,7 @@
       "acceptanceCriteria": [
         "On boot (before PIN prompt), compute SHA-256 over the firmware partition (esp_partition_read loop)",
         "Expected hash stored in SE051C2 as binary object ID=0x06 (written during factory provisioning)",
-        "If computed hash matches SE-stored hash: proceed to PIN entry; display 'Integrity OK ✓' for 1 s",
+        "If computed hash matches SE-stored hash: proceed to PIN entry; display 'Integrity OK \u2713' for 1 s",
         "If mismatch: display 'FIRMWARE TAMPERED!' with full OLED invert, sound buzzer if connected, refuse to proceed to PIN entry",
         "Tamper state exits only via physical reset; device loops on tamper screen indefinitely",
         "Self-test completes in < 3 s for 1 MB firmware partition",
@@ -646,6 +646,28 @@
       "priority": 30,
       "passes": true,
       "notes": "This complements secure boot (US-023). Secure boot prevents unsigned firmware from booting; integrity check detects if signed but modified firmware is running (e.g., signed with a stolen key). Defense in depth."
+    },
+    {
+      "id": "US-031",
+      "title": "ATECC608B Firmware Hash Provisioning and Slot-Read",
+      "description": "As a security engineer, I need the ATECC608B HAL to actually read and write the firmware SHA-256 hash from its dedicated data slot, and a factory provisioning script to write the hash at manufacturing time, so that the US-030 integrity check becomes fully operational on hardware.",
+      "agents": [
+        "security-engineer",
+        "firmware-engineer"
+      ],
+      "acceptanceCriteria": [
+        "Implement se051_read_object for SE051_OBJ_FW_HASH in atecc608_hal_esp.cpp: use ATECC Read command (opcode 0x02) on the mapped slot (ATECC_SLOT_FW_HASH), returning 32 bytes of stored hash or SE_ERR_NOTFOUND if slot is blank/unwritten",
+        "Implement se051_store_object (or extend se051_store_key) for SE051_OBJ_FW_HASH: use ATECC Write command (opcode 0x12) to write 32 bytes to ATECC_SLOT_FW_HASH; slot must be config-locked before write succeeds",
+        "Python provisioning script (scripts/provision_fw_hash.py): takes firmware.bin path and serial port as args; computes SHA-256 of binary; connects to device over USB CDC; sends PROVISION_HASH:<hex64> command; device writes hash to ATECC slot via se051_store_object; script confirms with HASH_OK response",
+        "Add SERIAL_CMD_PROVISION_HASH = 7 to serial_transport: device accepts PROVISION_HASH:<hex64> only when wallet is NOT initialized (factory-only command); parses 64 hex chars to 32 bytes; calls se051_store_object(SE051_OBJ_FW_HASH, hash, 32); replies HASH_OK or HASH_ERR",
+        "After provisioning, boot with no firmware changes: display shows 'Integrity OK' for 1 s then proceeds normally",
+        "After provisioning, reflash with modified firmware.bin: display shows 'FIRMWARE TAMPERED!' with inverted OLED, device loops without watchdog feed",
+        "Unit test (USE_SE_STUB): stub se051_read_object returns mock 32-byte hash for SE051_OBJ_FW_HASH; firmware_integrity_check() returns true when computed matches stored, false when they differ",
+        "ATECC slot config: document required ECC slot configuration (DataZone locked, slot config allows clear-text read/write before key lock) in scripts/atecc_slot_config.md"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": "US-030 (firmware integrity check) is implemented and compiles; it skips gracefully when SE_ERR_NOTFOUND. This story makes it operational on real hardware. Provisioning command gated on !wallet_is_initialized() to prevent post-setup hash overwrite attacks."
     }
   ]
 }
