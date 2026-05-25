@@ -21,6 +21,7 @@
 #include "watchdog.h"
 #include "balance.h"
 #include "tx_history.h"
+#include "fw_integrity.h"
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool seAvailable = false;

@@ -122,6 +122,29 @@ void serial_send_tx_history_request(const char *address) {
 #endif
 }
 
+void serial_send_hash_ok(void) {
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.println("HASH_OK");
+#else
+    printf("HASH_OK\n");
+#endif
+}
+
+void serial_send_hash_err(void) {
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.println("HASH_ERR");
+#else
+    printf("HASH_ERR\n");
+#endif
+}
+
+static int hex_nibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+}
+
 static serial_msg_t parse_line(const char *line, size_t line_len) {
     serial_msg_t msg;
     memset(&msg, 0, sizeof(msg));
@@ -161,6 +184,24 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
             memcpy(msg.data + 8, &unconf, 8);
             msg.cmd = SERIAL_CMD_BALANCE;
             msg.data_len = 16;
+        }
+    } else if (strncmp(line, "PROVISION_HASH:", 15) == 0) {
+        // Factory-only command: PROVISION_HASH:<64-hex-chars>
+        // Parses 32 bytes into msg.data; caller is responsible for the
+        // "wallet must be uninitialized" gate before writing to the SE.
+        size_t hex_len = line_len - 15;
+        if (hex_len == 64) {
+            uint8_t ok = 1;
+            for (size_t i = 0; i < 32; i++) {
+                int hi = hex_nibble(line[15 + 2 * i]);
+                int lo = hex_nibble(line[15 + 2 * i + 1]);
+                if (hi < 0 || lo < 0) { ok = 0; break; }
+                msg.data[i] = (uint8_t)((hi << 4) | lo);
+            }
+            if (ok) {
+                msg.cmd = SERIAL_CMD_PROVISION_HASH;
+                msg.data_len = 32;
+            }
         }
     } else if (strncmp(line, "TX:", 3) == 0) {
         const char *p = line + 3;

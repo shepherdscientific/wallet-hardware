@@ -278,10 +278,74 @@ se051_err_t se051_schnorr_sign(uint8_t key_id,
   return SE_ERR_NOTFOUND;
 }
 
+// ─── ATECC608B Data-Zone Read/Write helpers ────────────────────────────────
+// P1 zone byte: bit 7 = 1 → 32-byte transfer; bits 1:0 = zone (10 = Data).
+// P2 address: bits 2:0 = offset (32-byte blocks within slot), bits 6:3 = slot,
+// bits 15:8 = block. Slots 8-15 hold ≥ 32 bytes so block 0 / offset 0 is fine
+// for a single 32-byte object like the firmware hash.
+
+#define ATECC_RW_P1_DATA_32  0x82
+
+static uint16_t atecc_slot_addr(uint8_t slot) {
+  return (uint16_t)((slot & 0x0F) << 3);
+}
+
+static se051_err_t atecc_read_slot32(uint8_t slot, uint8_t out[32]) {
+  atecc_wake();
+  se051_err_t err = atecc_send_cmd(ATECC_CMD_READ,
+                                   ATECC_RW_P1_DATA_32,
+                                   atecc_slot_addr(slot), NULL, 0);
+  if (err != SE_OK) return err;
+
+  uint8_t resp[40];
+  size_t rlen = 0;
+  err = atecc_recv_resp(resp, &rlen, sizeof(resp));
+  if (err != SE_OK) return err;
+  // A 1-byte response equals an ATECC status word (0x00 = OK is unexpected
+  // here; non-zero means error such as ParseError / ExecError).  Any reply
+  // shorter than 32 bytes therefore means the slot is unreadable or blank.
+  if (rlen < 32) return SE_ERR_NOTFOUND;
+
+  memcpy(out, resp, 32);
+  return SE_OK;
+}
+
+static se051_err_t atecc_write_slot32(uint8_t slot, const uint8_t in[32]) {
+  atecc_wake();
+  se051_err_t err = atecc_send_cmd(ATECC_CMD_WRITE,
+                                   ATECC_RW_P1_DATA_32,
+                                   atecc_slot_addr(slot), in, 32);
+  if (err != SE_OK) return err;
+
+  uint8_t resp[4];
+  size_t rlen = 0;
+  err = atecc_recv_resp(resp, &rlen, sizeof(resp));
+  if (err != SE_OK) return err;
+  if (rlen < 1) return SE_ERR_COMM;
+  // ATECC Write returns a single status byte: 0x00 == success.  Anything else
+  // (e.g. 0x01 ExecError when slot is unlocked or config disallows the write,
+  // 0x04 ParseError) is surfaced as a locked / auth failure.
+  if (resp[0] != 0x00) return SE_ERR_LOCKED;
+  return SE_OK;
+}
+
 se051_err_t se051_store_key(uint8_t key_id,
                             const uint8_t *key_material,
                             size_t key_len) {
-  (void)key_id; (void)key_material; (void)key_len;
+  if (!key_material || key_len == 0) return SE_ERR_PARAM;
+  if (!g_se051_ready) return SE_ERR_COMM;
+
+  uint8_t slot = map_key_id(key_id);
+  if (slot == 0xFF) return SE_ERR_PARAM;
+
+  // Only data-zone slots (≥8) support clear-text 32-byte writes via this path.
+  // Master / chaincode key injection on slots 0-7 is not implemented here —
+  // those slots are written by the GenKey command flow during setup.
+  if (key_id == SE051_OBJ_FW_HASH) {
+    if (key_len != 32) return SE_ERR_PARAM;
+    return atecc_write_slot32(slot, key_material);
+  }
+
   return SE_ERR_NOTFOUND;
 }
 
@@ -368,9 +432,30 @@ se051_err_t se051_read_object(uint8_t obj_id,
                               size_t *out_len) {
   if (!buf || buf_len == 0 || !out_len) return SE_ERR_PARAM;
   if (!g_se051_ready) return SE_ERR_COMM;
-
-  (void)obj_id;
   *out_len = 0;
+
+  uint8_t slot = map_key_id(obj_id);
+  if (slot == 0xFF) return SE_ERR_PARAM;
+
+  if (obj_id == SE051_OBJ_FW_HASH) {
+    if (buf_len < 32) return SE_ERR_PARAM;
+    uint8_t raw[32];
+    se051_err_t err = atecc_read_slot32(slot, raw);
+    if (err != SE_OK) return err;
+    // Blank/unwritten slots return all-zeros (factory default) or all-FFs
+    // (erased).  Treat either as "not provisioned" so callers can skip the
+    // integrity check on a fresh device instead of tripping a false tamper.
+    uint8_t all_zero = 1, all_ff = 1;
+    for (int i = 0; i < 32; i++) {
+      if (raw[i] != 0x00) all_zero = 0;
+      if (raw[i] != 0xFF) all_ff   = 0;
+    }
+    if (all_zero || all_ff) return SE_ERR_NOTFOUND;
+    memcpy(buf, raw, 32);
+    *out_len = 32;
+    return SE_OK;
+  }
+
   return SE_ERR_NOTFOUND;
 }
 
