@@ -5,6 +5,7 @@
 #if defined(ARDUINO) && defined(ESP32)
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <esp_idf_version.h>
 #include <Preferences.h>
 #endif
 
@@ -30,7 +31,26 @@ void watchdog_init(void) {
         wd_prefs.putString(KEY_LAST_CRASH, "");
     }
 
+    // esp_task_wdt_init() signature changed in ESP-IDF v5.0.
+    // v4.x: esp_task_wdt_init(uint32_t timeout_s, bool panic)
+    // v5.x: esp_task_wdt_init(const esp_task_wdt_config_t *config)
+    // Calling the v4 form under v5 passes the integer '10' as a pointer,
+    // causing the TWDT to read a garbage config from address 0x0000000A —
+    // typically a near-zero timeout with panic=false — which fires immediately
+    // and resets the device via esp_restart() (rst:0x3) before any serial
+    // output appears.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    {
+        esp_task_wdt_config_t twdt_cfg = {
+            .timeout_ms     = WATCHDOG_TIMEOUT_SEC * 1000U,
+            .idle_core_mask = 0,          // don't watch idle tasks
+            .trigger_panic  = true,
+        };
+        esp_task_wdt_init(&twdt_cfg);
+    }
+#else
     esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);
+#endif
     esp_task_wdt_add(NULL);
 
     const char *reset_str = watchdog_last_reset_reason();
