@@ -644,7 +644,7 @@
         "Self-test can be skipped during development under -DSKIP_INTEGRITY_CHECK build flag"
       ],
       "priority": 30,
-      "passes": false,
+      "passes": true,
       "notes": "This complements secure boot (US-023). Secure boot prevents unsigned firmware from booting; integrity check detects if signed but modified firmware is running (e.g., signed with a stolen key). Defense in depth."
     }
   ]

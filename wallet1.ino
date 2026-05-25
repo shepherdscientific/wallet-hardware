@@ -1,7 +1,9 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "esp_partition.h"
 #include "se051_hal.h"
+#include "sha256.h"
 #include "pin_manager.h"
 #include "wallet_storage.h"
 #include "bip39.h"
@@ -22,6 +24,97 @@
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 bool seAvailable = false;
+
+// ─── US-030: Firmware Integrity Self-Test ────────────────────────────────
+//
+// Reads the expected SHA-256 hash from SE object 0x06 (written at factory
+// provisioning), then computes SHA-256 over the running firmware partition
+// and compares.  If no hash is provisioned (SE_ERR_NOTFOUND), the check is
+// skipped gracefully — the device has not been through factory provisioning.
+// Build with -DSKIP_INTEGRITY_CHECK to bypass entirely (dev builds).
+
+#ifndef SKIP_INTEGRITY_CHECK
+
+// Returns true  → firmware OK (or no hash provisioned yet)
+// Returns false → hash mismatch, tamper detected
+static bool firmware_integrity_check(void) {
+  if (!seAvailable) return true;   // SE offline → cannot verify, allow boot
+
+  // Read expected hash from SE object 0x06
+  uint8_t stored_hash[SHA256_DIGEST_LENGTH];
+  size_t  stored_len = 0;
+  se051_err_t rc = se051_read_object(SE051_OBJ_FW_HASH,
+                                     stored_hash, sizeof(stored_hash),
+                                     &stored_len);
+  if (rc == SE_ERR_NOTFOUND || stored_len != SHA256_DIGEST_LENGTH) {
+    return true;   // not provisioned yet — skip check
+  }
+  if (rc != SE_OK) return true;    // SE read error → fail-open (dev safety)
+
+  // Locate the running firmware partition
+  const esp_partition_t *part = esp_partition_find_first(
+    ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
+  if (!part) return false;
+
+  // Stream-hash the partition in 4 KB chunks
+  sha256_ctx ctx;
+  sha256_init(&ctx);
+
+  static uint8_t chunk[4096];          // static: avoids large stack frame
+  uint32_t offset    = 0;
+  uint32_t remaining = part->size;
+
+  while (remaining > 0) {
+    uint32_t to_read = (remaining < sizeof(chunk)) ? remaining
+                                                   : (uint32_t)sizeof(chunk);
+    if (esp_partition_read(part, offset, chunk, to_read) != ESP_OK) {
+      return false;
+    }
+    sha256_update(&ctx, chunk, (size_t)to_read);
+    offset    += to_read;
+    remaining -= to_read;
+    watchdog_feed();                   // keep watchdog happy during long hash
+  }
+
+  uint8_t computed[SHA256_DIGEST_LENGTH];
+  sha256_final(&ctx, computed);
+
+  return memcmp(computed, stored_hash, SHA256_DIGEST_LENGTH) == 0;
+}
+
+// Call after SE init.  Blocks forever on tamper; shows 1-second OK banner.
+static void run_integrity_check(void) {
+  bool ok = firmware_integrity_check();
+
+  if (!ok) {
+    // ── TAMPER DETECTED ──────────────────────────────────────────────────
+    display.invertDisplay(true);
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setCursor(0, 4);
+    display.println("FIRMWARE");
+    display.println("TAMPERED!");
+    display.setTextSize(1);
+    display.setCursor(0, 48);
+    display.println("Power-cycle to retry");
+    display.display();
+    // Loop indefinitely.  Do NOT feed the watchdog — let it reset the device
+    // so the tamper screen re-appears on every reboot until physically fixed.
+    for (;;) { delay(500); }
+  }
+
+  // ── INTEGRITY OK ─────────────────────────────────────────────────────
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(16, 22);
+  display.println("Integrity OK");
+  display.setCursor(48, 34);
+  display.println("OK");
+  display.display();
+  delay(1000);
+}
+
+#endif // SKIP_INTEGRITY_CHECK
 
 static void i2c_bus_sweep(void) {
   for (uint8_t addr = 1; addr < 128; addr++) {
@@ -76,6 +169,10 @@ void setup() {
 
   se051_err_t seErr = se051_init();
   seAvailable = (seErr == SE_OK);
+
+#ifndef SKIP_INTEGRITY_CHECK
+  run_integrity_check();
+#endif
 
   display.clearDisplay();
   display.setTextSize(2);

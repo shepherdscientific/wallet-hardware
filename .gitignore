@@ -24,6 +24,7 @@ bin/
 out/
 .pio/
 .pioenvs/
+test_bip32_bin
 
 # IDE Specific Files (Arduino IDE 2.x and Visual Studio)
 .arduino/

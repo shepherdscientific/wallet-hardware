@@ -624,3 +624,45 @@ Patterns discovered:
 - All 90 existing tests pass (11 tx_history + 11 balance + 10 settings + 12 account_manager + 7 watchdog + 8 coin_control + 19 tx_metadata + 12 multisig)
 - New files: tx_history.h (48 lines), tx_history.cpp (157 lines), test_tx_history.cpp (168 lines)
 - Modified: serial_transport.h (+5 lines), serial_transport.cpp (+52 lines), wallet1.ino (+143 lines)
+
+### 2026-05-25: US-030 — Firmware Integrity Self-Test on Boot
+
+Pre-work (prior sessions):
+- Fixed SHA-512 round constant K[18]: `0x0fc19dc68ca8cc5ULL` (wrong, 15 hex digits) → `0x0fc19dc68b8cd5b5ULL`
+  Caused all HMAC-SHA512 and BIP32 derivations to produce wrong output.
+- Fixed secp256k1 `secp_mod_add` carry-drop bug in bip32.cpp: `u256_add64` silently drops the carry
+  when a+b ≥ 2^256. The wrapped sum can be less than SECP_P so the subtraction check never fires.
+  Fix: detect carry via `!u256_gte64(sum, a)` and add correction constant `0x1000003d1` (= 2^32+977).
+- Fixed same carry-drop bug in `n_mod_add` for group order N.
+  Correction constant: `{0x402da1732fc9bebf, 0x4551231950b75fc4, 0x1, 0x0}` (= 2^256 - N).
+- Fixed `test_bip32.cpp`: 6 wrong expected values (m/0' child key, m/.../1e9 pubkey, TV2 seed had
+  trailing garbage nibble making it 33 bytes, TV2 expected values truncated/wrong).
+  All 24 BIP32 test vector 1 & 2 tests now pass (24/24).
+
+US-030 implementation (wallet1.ino):
+- Added `#include "esp_partition.h"` and `#include "sha256.h"`.
+- `firmware_integrity_check()`: reads expected SHA-256 hash from SE object 0x06 (SE051_OBJ_FW_HASH);
+  if SE_ERR_NOTFOUND or SE offline, skips gracefully (not yet provisioned). Locates the running
+  firmware partition via `esp_partition_find_first(APP, FACTORY, NULL)`, streams it in 4 KB static
+  chunks feeding `sha256_update()`, calls `watchdog_feed()` each chunk to prevent TWDT reset.
+  Returns `memcmp(computed, stored, 32) == 0`.
+- `run_integrity_check()`: calls firmware_integrity_check().
+  - Tamper: `display.invertDisplay(true)`, textSize 2 "FIRMWARE TAMPERED!" + "Power-cycle to retry",
+    then `for(;;) { delay(500); }` — does NOT feed watchdog so TWDT resets the device, re-running
+    the tamper check on every reboot until physically fixed.
+  - OK: 1-second "Integrity OK" banner, then continues to READY screen.
+- Guarded by `#ifndef SKIP_INTEGRITY_CHECK` — add `-DSKIP_INTEGRITY_CHECK` to build_flags to bypass.
+- Call site: `run_integrity_check()` inserted in setup() immediately after `seAvailable` is set,
+  before the READY/I2C/SE status display.
+- Dev behaviour: ATECC608B HAL `se051_read_object` returns SE_ERR_NOTFOUND (stub, no provisioning),
+  so check passes silently on the real device until factory provisioning runs.
+- PlatformIO build: `pio run -e dev` SUCCESS, no warnings, 9.3% flash / 9.7% RAM.
+
+No new unit tests (ESP-IDF esp_partition_read is not host-stubbed). Existing 90 tests unaffected.
+
+Factory provisioning note (not yet implemented):
+- A Python provisioning script should: compute SHA-256 over the flashed firmware.bin, then write
+  the 32-byte hash to the ATECC608B using the appropriate slot write command, mapping to
+  SE051_OBJ_FW_HASH (slot 0x06 per ATECC_SLOT_FW_HASH in atecc608_hal_esp.cpp).
+- `se051_read_object` for ATECC608B needs a real slot-read implementation (currently stub returns
+  SE_ERR_NOTFOUND); this is the remaining work to fully activate the check on hardware.

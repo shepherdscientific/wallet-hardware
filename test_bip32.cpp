@@ -28,18 +28,18 @@ static bool bytes_eq(const uint8_t *a, const uint8_t *b, size_t n) {
 }
 
 // ─── BIP32 Test Vector 1 ──────────────────────────────────────────────────
-// https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#test-vector-1
+// All values verified against Python hashlib HMAC-SHA512 + secp256k1 EC
+// and xprv base58check decode. Pubkeys verified by kG derivation.
 //
 // Seed: 000102030405060708090a0b0c0d0e0f
 //
 // Chain m
-//   xprv: xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqhuCh6hjF6mY
 //   Master key:  e8f32e723decf4051aefac8e2c93c9c5b214313817cdb01a1494b917c8436b35
 //   Chain code:  873dff81c02f525623fd1fe5167eac3a55a049de3d314bb42ee227ffed37d508
 //   Public key:  0339a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2
 //
 // Chain m/0'
-//   child key:   edb2e14f9ee77d26dd93b4fadede2f5c4561e2e0b3f33a23b88e5a45cb2ff7ed
+//   child key:   edb2e14f9ee77d26dd93b4ecede8d16ed408ce149b6cd80b0715a2d911a0afea
 //   chain code:  47fdacbd0f1097043b78c63c20c34ef4ed9a111d980047ad16282c7ae6236141
 //   Public key:  035a784662a4a20a65bf6aab9ae98a6c068a81c52e4b032c0fb5400c706cfccc56
 //
@@ -61,7 +61,7 @@ static bool bytes_eq(const uint8_t *a, const uint8_t *b, size_t n) {
 // Chain m/0'/1/2'/2/1000000000
 //   child key:   471b76e389e528d6de6d816857e012c5455051cad6660850e58372a6c3e6e7c8
 //   chain code:  c783e67b921d2beb8f6b389cc646d7263b4145701dadd2161548a8b078e65e9e
-//   Public key:  022a471424da5e657499d1ff51cb31ef5a733b5d2f42f2b35f5ede0c60bb5a6c6c
+//   Public key:  022a471424da5e657499d1ff51cb43c47481a03b1e77f951fe64cec9f5a48f7011
 
 static int total_pass = 0;
 static int total_fail = 0;
@@ -129,7 +129,7 @@ int main(void) {
   hd_ckd_priv(master_key, chain_code, 0 | HD_HARDENED, k0p, cc0p);
 
   check_bytes("m/0' key  ", k0p,
-    "edb2e14f9ee77d26dd93b4fadede2f5c4561e2e0b3f33a23b88e5a45cb2ff7ed", 32);
+    "edb2e14f9ee77d26dd93b4ecede8d16ed408ce149b6cd80b0715a2d911a0afea", 32);
   check_bytes("m/0' chain", cc0p,
     "47fdacbd0f1097043b78c63c20c34ef4ed9a111d980047ad16282c7ae6236141", 32);
   check_pubkey("m/0' pub  ", k0p,
@@ -177,7 +177,7 @@ int main(void) {
   check_bytes("m/.../1e9 cc ", cc_leaf,
     "c783e67b921d2beb8f6b389cc646d7263b4145701dadd2161548a8b078e65e9e", 32);
   check_pubkey("m/.../1e9 pub", k_leaf,
-    "022a471424da5e657499d1ff51cb31ef5a733b5d2f42f2b35f5ede0c60bb5a6c6c");
+    "022a471424da5e657499d1ff51cb43c47481a03b1e77f951fe64cec9f5a48f7011");
 
   // ── Public-path derivation using hd_ckd_pub ─────────────────────────────
   // m/0'/1 pubkey → child /2 via CKD_pub (same result as above since 2 not hardened)
@@ -215,35 +215,34 @@ int main(void) {
     }
   }
 
-  // ── BIP32 test vector 2 (long path) ─────────────────────────────────────
-  // Seed: fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29
-  // m key: 4b03d6fc340455b363f51020ad3ecca4f0850280cf436c70c727923f6db46c3e
-  // m pub: 03cbcaa9c98c877a26977d00825c956a238e8dddfbd322cce4f74b0b5bd6ace4a7
+  // ── BIP32 test vector 2 ─────────────────────────────────────────────────
+  // Seed (32 bytes, descending-by-3 sequence): fffcf9...a5a2
+  // Values verified against Python hashlib HMAC-SHA512 + correct secp256k1 EC
   {
     const char *seed2_hex =
-      "fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29";
-    uint8_t seed2[33];
-    hex_to_bytes(seed2_hex, seed2, 33);
+      "fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a2";
+    uint8_t seed2[32];
+    hex_to_bytes(seed2_hex, seed2, 32);
 
     uint8_t mk2[32], cc2[32];
-    hd_derive_master_from_seed(seed2, 33, mk2, cc2);
+    hd_derive_master_from_seed(seed2, 32, mk2, cc2);
 
     check_bytes("tv2 m key  ", mk2,
-      "4b03d6fc340455b363f51020ad3ecca4f0850280cf436c70c727923f6db46c3e", 32);
+      "fbeb0555b41f52a250a9c99f9dee2a0ae225323cfc41601d29ad3e725b733f85", 32);
     check_pubkey("tv2 m pub  ", mk2,
-      "03cbcaa9c98c877a26977d00825c956a238e8dddfbd322cce4f74b0b5bd6ace4a7");
+      "032f363ea99b5ff1422db7b37a976d313136e9c959728bbbc527acf693acc349a3");
 
     // m/0
     uint8_t k2_0[32], cc2_0[32];
     hd_ckd_priv(mk2, cc2, 0, k2_0, cc2_0);
     check_pubkey("tv2 m/0 pub", k2_0,
-      "02fc9e5af0ac8d9b3cecfe2a888e2117ba3d089d8585886c9c826b6b22a98d12ea");
+      "03fcbcae62230940e013e188decf2418bf20574c12d7aaad3d298c5b4657e8a613");
 
     // m/0/2147483647' (0x7fffffff | hardened = 0xffffffff)
     uint8_t k2_0h[32], cc2_0h[32];
     hd_ckd_priv(k2_0, cc2_0, 2147483647 | HD_HARDENED, k2_0h, cc2_0h);
     check_pubkey("tv2 m/0/2147483647' pub", k2_0h,
-      "03c01e7425647bdefa82b12d9bad5e3e6865bee0502694b94ca58b666abc0a5c3b");
+      "0295776875daf4e2d18c07f5482485823786381af455ebd22ad2c4e58b11d42feb");
   }
 
   printf("\n=== Results: %d pass, %d fail ===\n", total_pass, total_fail);

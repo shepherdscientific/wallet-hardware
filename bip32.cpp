@@ -274,7 +274,14 @@ static void secp_mod_mul(uint64_t r[4], const uint64_t a[4], const uint64_t b[4]
 static void secp_mod_add(uint64_t r[4], const uint64_t a[4], const uint64_t b[4]) {
   uint64_t sum[4];
   u256_add64(sum, a, b);
-  if (u256_gte64(sum, SECP_P)) {
+  // Detect carry: when a + b >= 2^256, u256_add64 wraps and sum < a.
+  // In that case the true sum = 2^256 + sum ≡ sum + (2^32+977) (mod p).
+  // Since a,b < p, result = a+b-p is in [0,p) so no further reduction needed.
+  if (!u256_gte64(sum, a)) {
+    static const uint64_t C[4] = {0x1000003d1ULL, 0, 0, 0};
+    u256_add64(sum, sum, C);
+    u256_set64(r, sum);
+  } else if (u256_gte64(sum, SECP_P)) {
     u256_sub64(r, sum, SECP_P);
   } else {
     u256_set64(r, sum);
@@ -326,7 +333,21 @@ static void secp_mod_inv(uint64_t r[4], const uint64_t a[4]) {
 static void n_mod_add(uint64_t r[4], const uint64_t a[4], const uint64_t b[4]) {
   uint64_t sum[4];
   u256_add64(sum, a, b);
-  if (u256_gte64(sum, SECP_N)) {
+  // Detect carry: when a + b >= 2^256, sum wraps and sum < a.
+  // True sum = 2^256 + sum ≡ sum + (2^256 - N) (mod N).
+  // 2^256 - N = 0x14551231950b75fc4402da1732fc9bebf
+  if (!u256_gte64(sum, a)) {
+    static const uint64_t C[4] = {
+      0x402da1732fc9bebfULL,  // 2^256 - N, d[0] (LSW)
+      0x4551231950b75fc4ULL,  // d[1]
+      0x1ULL,                 // d[2]
+      0x0ULL                  // d[3]
+    };
+    u256_add64(sum, sum, C);
+    // result may still be >= N after this addition; one conditional subtract suffices
+    if (u256_gte64(sum, SECP_N)) u256_sub64(sum, sum, SECP_N);
+    u256_set64(r, sum);
+  } else if (u256_gte64(sum, SECP_N)) {
     u256_sub64(r, sum, SECP_N);
   } else {
     u256_set64(r, sum);
