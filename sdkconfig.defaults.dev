@@ -8,3 +8,8 @@ CONFIG_SECURE_BOOT=n
 CONFIG_FLASH_ENCRYPTION_ENABLED=n
 CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
 CONFIG_BOOTLOADER_LOG_LEVEL=3
+
+# Increase the Arduino loopTask stack from the default 8 KB to 32 KB.
+# serial_msg_t (data[8192]) is now in BSS via g_serial_msg, but this safety
+# margin guards against future large locals and deep call chains.
+CONFIG_ARDUINO_LOOP_STACK_SIZE=32768

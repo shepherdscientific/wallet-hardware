@@ -54,6 +54,11 @@ void serial_send_hash_err(void);
 
 serial_msg_t serial_poll(void);
 
+/* Stack-safe variant: writes directly into *out instead of returning 8 KB by
+ * value.  Prefer this in loop() to avoid placing a serial_msg_t (8 KB) on the
+ * loopTask stack (default only 8 KB).  *out is always zeroed on entry.       */
+void serial_poll_into(serial_msg_t *out);
+
 void serial_inject_line(const char *line);
 
 #ifdef __cplusplus

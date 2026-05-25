@@ -145,34 +145,37 @@ static int hex_nibble(char c) {
     return -1;
 }
 
-static serial_msg_t parse_line(const char *line, size_t line_len) {
-    serial_msg_t msg;
-    memset(&msg, 0, sizeof(msg));
+/* parse_line_into — out-param version of the former parse_line().
+ * Writing into *out (which lives in the caller's static buffer) means no
+ * 8 KB serial_msg_t is ever placed on the call stack.                       */
+static void parse_line_into(const char *line, size_t line_len,
+                             serial_msg_t *out) {
+    memset(out, 0, sizeof(*out));
 
-    if (!line || line_len == 0) return msg;
+    if (!line || line_len == 0) return;
 
     if (strncmp(line, "PSBT:", 5) == 0) {
         size_t decoded = base64_decode(line + 5, line_len - 5,
-                                       msg.data, sizeof(msg.data));
+                                       out->data, sizeof(out->data));
         if (decoded > 0) {
-            msg.cmd = SERIAL_CMD_PSBT;
-            msg.data_len = decoded;
+            out->cmd      = SERIAL_CMD_PSBT;
+            out->data_len = decoded;
         }
     } else if (strncmp(line, "VERIFY:", 7) == 0) {
         size_t addr_len = line_len - 7;
-        if (addr_len < sizeof(msg.data)) {
-            memcpy(msg.data, line + 7, addr_len);
-            msg.data[addr_len] = '\0';
-            msg.cmd = SERIAL_CMD_VERIFY;
-            msg.data_len = addr_len;
+        if (addr_len < sizeof(out->data)) {
+            memcpy(out->data, line + 7, addr_len);
+            out->data[addr_len] = '\0';
+            out->cmd      = SERIAL_CMD_VERIFY;
+            out->data_len = addr_len;
         }
     } else if (strncmp(line, "PAIRING:", 8) == 0) {
         size_t words_len = line_len - 8;
-        if (words_len < sizeof(msg.data)) {
-            memcpy(msg.data, line + 8, words_len);
-            msg.data[words_len] = '\0';
-            msg.cmd = SERIAL_CMD_PAIRING;
-            msg.data_len = words_len;
+        if (words_len < sizeof(out->data)) {
+            memcpy(out->data, line + 8, words_len);
+            out->data[words_len] = '\0';
+            out->cmd      = SERIAL_CMD_PAIRING;
+            out->data_len = words_len;
         }
     } else if (strncmp(line, "BALANCE:", 8) == 0) {
         uint64_t conf = 0, unconf = 0;
@@ -180,15 +183,14 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
                        (unsigned long long *)&conf,
                        (unsigned long long *)&unconf);
         if (n >= 1) {
-            memcpy(msg.data, &conf, 8);
-            memcpy(msg.data + 8, &unconf, 8);
-            msg.cmd = SERIAL_CMD_BALANCE;
-            msg.data_len = 16;
+            memcpy(out->data,     &conf,   8);
+            memcpy(out->data + 8, &unconf, 8);
+            out->cmd      = SERIAL_CMD_BALANCE;
+            out->data_len = 16;
         }
     } else if (strncmp(line, "PROVISION_HASH:", 15) == 0) {
-        // Factory-only command: PROVISION_HASH:<64-hex-chars>
-        // Parses 32 bytes into msg.data; caller is responsible for the
-        // "wallet must be uninitialized" gate before writing to the SE.
+        /* Factory-only: PROVISION_HASH:<64-hex-chars>
+         * The caller enforces the "wallet must be uninitialized" gate.       */
         size_t hex_len = line_len - 15;
         if (hex_len == 64) {
             uint8_t ok = 1;
@@ -196,15 +198,15 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
                 int hi = hex_nibble(line[15 + 2 * i]);
                 int lo = hex_nibble(line[15 + 2 * i + 1]);
                 if (hi < 0 || lo < 0) { ok = 0; break; }
-                msg.data[i] = (uint8_t)((hi << 4) | lo);
+                out->data[i] = (uint8_t)((hi << 4) | lo);
             }
             if (ok) {
-                msg.cmd = SERIAL_CMD_PROVISION_HASH;
-                msg.data_len = 32;
+                out->cmd      = SERIAL_CMD_PROVISION_HASH;
+                out->data_len = 32;
             }
         }
     } else if (strncmp(line, "TX:", 3) == 0) {
-        const char *p = line + 3;
+        const char *p   = line + 3;
         const char *end = line + line_len;
         uint8_t txid_bytes[32];
         int txid_pos = 0;
@@ -235,28 +237,30 @@ static serial_msg_t parse_line(const char *line, size_t line_len) {
                     if (p < end && *p == ':') {
                         p++;
                         uint32_t conf = (uint32_t)strtoul(p, NULL, 10);
-                        memcpy(msg.data, txid_bytes, 32);
-                        msg.data[32] = (uint8_t)dir;
-                        memcpy(msg.data + 33, &amount, 8);
-                        memcpy(msg.data + 41, &conf, 4);
-                        msg.cmd = SERIAL_CMD_TX_ENTRY;
-                        msg.data_len = 45;
+                        memcpy(out->data,      txid_bytes, 32);
+                        out->data[32] = (uint8_t)dir;
+                        memcpy(out->data + 33, &amount, 8);
+                        memcpy(out->data + 41, &conf,   4);
+                        out->cmd      = SERIAL_CMD_TX_ENTRY;
+                        out->data_len = 45;
                     }
                 }
             }
         }
     }
-
-    return msg;
 }
 
-serial_msg_t serial_poll(void) {
-    serial_msg_t msg;
-    memset(&msg, 0, sizeof(msg));
+/* serial_poll_into — preferred, stack-safe API for use from loop().
+ * The caller supplies *out (typically a file-scope static); no serial_msg_t
+ * (8 KB) is allocated on the stack anywhere in this call chain.             */
+void serial_poll_into(serial_msg_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
 
     if (recv_has_line) {
         recv_has_line = false;
-        return parse_line(recv_buf, recv_pos);
+        parse_line_into(recv_buf, recv_pos, out);
+        return;
     }
 
 #if defined(ARDUINO) && defined(ESP32)
@@ -267,22 +271,32 @@ serial_msg_t serial_poll(void) {
             recv_buf[recv_pos] = '\0';
             size_t line_len = recv_pos;
             recv_pos = 0;
-            return parse_line(recv_buf, line_len);
+            parse_line_into(recv_buf, line_len, out);
+            return;
         }
         recv_buf[recv_pos++] = c;
     }
 #else
     if (fgets(recv_buf, (int)sizeof(recv_buf), stdin)) {
         recv_pos = strlen(recv_buf);
-        while (recv_pos > 0 && (recv_buf[recv_pos - 1] == '\n' || recv_buf[recv_pos - 1] == '\r'))
+        while (recv_pos > 0 &&
+               (recv_buf[recv_pos - 1] == '\n' || recv_buf[recv_pos - 1] == '\r'))
             recv_buf[--recv_pos] = '\0';
         size_t line_len = recv_pos;
         recv_pos = 0;
-        return parse_line(recv_buf, line_len);
+        parse_line_into(recv_buf, line_len, out);
     }
 #endif
+}
 
-    return msg;
+/* serial_poll — kept for backward compatibility with host-based unit tests
+ * that call serial_inject_line() + serial_poll().  The static s_result lives
+ * in BSS (not on the stack) so only a shallow copy lands in the caller.
+ * New production code should call serial_poll_into() instead.               */
+serial_msg_t serial_poll(void) {
+    static serial_msg_t s_result;
+    serial_poll_into(&s_result);
+    return s_result;
 }
 
 void serial_inject_line(const char *line) {

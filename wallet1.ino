@@ -221,12 +221,18 @@ static void handle_provision_hash(const uint8_t *hash32) {
   else             serial_send_hash_err();
 }
 
+// File-scope static: the serial_msg_t struct is 8 KB (data[8192]).
+// Declaring it here moves it to the BSS segment instead of the loopTask
+// stack (default 8 KB), preventing the "Stack canary watchpoint triggered
+// (loopTask)" crash introduced when serial_poll() was called by value.
+static serial_msg_t g_serial_msg;
+
 void loop() {
   watchdog_feed();
 
-  serial_msg_t msg = serial_poll();
-  if (msg.cmd == SERIAL_CMD_PROVISION_HASH && msg.data_len == 32) {
-    handle_provision_hash(msg.data);
+  serial_poll_into(&g_serial_msg);
+  if (g_serial_msg.cmd == SERIAL_CMD_PROVISION_HASH && g_serial_msg.data_len == 32) {
+    handle_provision_hash(g_serial_msg.data);
   }
 
   bool c = (digitalRead(1) == LOW);
