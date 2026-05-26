@@ -1,6 +1,6 @@
 # CoinCube Hardware Wallet
 
-A fully air-gapped Bitcoin hardware wallet built on the ESP32-S3, featuring a 128×64 OLED display, two tactile buttons, and an NXP SE051C2 secure element for all private key operations.
+A fully air-gapped Bitcoin hardware wallet built on the ESP32-S3, featuring a 128×64 OLED display, two tactile buttons, and a hardware secure element for all private key operations.
 
 ---
 
@@ -10,11 +10,23 @@ A fully air-gapped Bitcoin hardware wallet built on the ESP32-S3, featuring a 12
 |---|---|---|
 | Microcontroller | ESP32-S3 (any module) | Application processor, USB CDC, BIP32/39 logic |
 | Display | SSD1306 128×64 OLED | Transaction review, address display, QR codes |
-| Secure Element | NXP SE051C2 | Key storage, ECDSA/Schnorr signing, TRNG, monotonic counter |
+| Secure Element | Microchip ATECC608B *(current)* | Key storage, ECDSA signing, TRNG, monotonic counter |
 | Button 1 | Tactile N/O (any 6×6 mm) | CONFIRM — select / sign / advance |
 | Button 2 | Tactile N/O (any 6×6 mm) | CANCEL — cycle / reject / back |
 
-> **Note on SE migration:** early prototypes use an ATECC608B on the same I²C bus (address `0x60`). The NXP SE051C2 (address `0x48`) replaces it for production. The SE HAL is abstracted so swapping the driver is the only code change required.
+---
+
+## Secure Element Roadmap
+
+CoinCube uses a compile-time–selectable SE HAL (`USE_ATECC608B` / `USE_SE051` / `USE_SE_STUB` / `USE_SE_FPGA`). Swapping the backend requires only a new HAL implementation file — all wallet logic above is portable.
+
+| Phase | Chip | Status | Notes |
+|-------|------|--------|-------|
+| **Current** | Microchip ATECC608B | ✅ In use | I²C `0x64`, ECDSA P-256, TRNG, monotonic counter, slot-based key store |
+| **Near-term** | NXP SE051E / SE050E | 🔜 On order | GlobalPlatform SCP03 secure channel, native Schnorr support, post-quantum extensions (CRYSTALS-Kyber, CRYSTALS-Dilithium via SE051E PQC variant) |
+| **Research** | Tang Nano 9K FPGA custom SE | 🔬 In design | Ternary-logic co-processor targeting ternary-accelerated lattice-based PQC (NTRU / CRYSTALS variants); interfaces over SPI/I²C with the same HAL abstraction |
+
+The FPGA SE is a longer-horizon research track — the goal is a fully open, auditable, ternary-native cryptographic core that can be independently verified down to the gate level, unlike closed-source silicon SEs.
 
 ---
 
@@ -22,13 +34,13 @@ A fully air-gapped Bitcoin hardware wallet built on the ESP32-S3, featuring a 12
 
 ```
 ESP32-S3 Pin  │  Signal       │  Destination
-──────────────┼───────────────┼─────────────────────────────
-GPIO 8        │  I²C SDA      │  SSD1306 SDA  +  SE051C2 SDA
-GPIO 9        │  I²C SCL      │  SSD1306 SCL  +  SE051C2 SCL
+──────────────┼───────────────┼──────────────────────────────────
+GPIO 8        │  I²C SDA      │  SSD1306 SDA  +  ATECC608B SDA
+GPIO 9        │  I²C SCL      │  SSD1306 SCL  +  ATECC608B SCL
 GPIO 1        │  BTN_CONFIRM  │  Tactile button → GND
 GPIO 2        │  BTN_CANCEL   │  Tactile button → GND
-3V3           │  Power        │  SSD1306 VCC  +  SE051C2 VCC
-GND           │  Ground       │  SSD1306 GND  +  SE051C2 GND  +  Buttons
+3V3           │  Power        │  SSD1306 VCC  +  ATECC608B VCC
+GND           │  Ground       │  SSD1306 GND  +  ATECC608B GND  +  Buttons
 USB D+/D−     │  Native USB   │  USB-C connector (PSBT exchange / firmware)
 ```
 
@@ -52,9 +64,9 @@ USB D+/D−     │  Native USB   │  USB-C connector (PSBT exchange / firmware
   └──────────────┘  │               │ shared I²C bus       │
                     │               │                     │
   ┌──────────────┐  │               │                     │
-  │ NXP SE051C2  │  │               │            USB D+/D─ ◄─── USB-C
+  │ ATECC608B    │  │               │            USB D+/D─ ◄─── USB-C
   │  Secure Elem │  │               │                     │
-  │  I²C 0x48    │  │               │                     │
+  │  I²C 0x64    │  │               │                     │
   │              │  │               │                     │
   │ VCC ◄────────┼──┤ 3V3           │                     │
   │ GND ◄────────┼──┤ GND           │                     │
@@ -75,20 +87,18 @@ USB D+/D−     │  Native USB   │  USB-C connector (PSBT exchange / firmware
 ### SSD1306 OLED (128×64)
 The display communicates over I²C at address `0x3C`. It is driven by the Adafruit SSD1306 library. At 128×64 pixels and `textSize(1)`, each character is 6×8 px giving 21 characters across and 8 rows — enough to display a chunked Bech32m address, transaction amounts, and a menu simultaneously. The display is set to auto-off after a configurable timeout (default 60 s) to prevent burn-in and reduce the side-channel attack surface.
 
-### NXP SE051C2 Secure Element
-The SE051C2 is the security boundary of the wallet. It communicates over I²C at address `0x48` on the same bus as the OLED. All of the following happen **inside the SE and never leave it**:
+### Microchip ATECC608B Secure Element *(current)*
+The ATECC608B is the current security boundary of the wallet. It communicates over I²C at address `0x64` on the same bus as the OLED. All of the following happen **inside the SE and never leave it**:
 
-- Master private key storage (BIP32 key object)
-- Child key derivation for signing
+- Master private key storage (slot-mapped BIP32 key material)
 - ECDSA signatures (P2WPKH inputs, BIP143 sighash)
-- Schnorr signatures (P2TR inputs, BIP341 sighash)
 - True random number generation (used for seed entropy and anti-phishing code)
 - Monotonic PIN attempt counter (tamper-resistant, cannot be reset by reflashing)
-- PIN hash storage
+- PIN hash storage and firmware integrity hash (slot 0x0C)
 
-The ESP32-S3 only ever sees public keys and signatures. The SE uses GlobalPlatform SCP03 for its secure channel; the HAL handles session management transparently.
+The ESP32-S3 only ever sees public keys and signatures. The HAL (`atecc608_hal_esp.cpp`, compiled under `-DUSE_ATECC608B`) implements the Microchip CryptoAuthLib-compatible wire protocol including the LSB-first CRC-16/8005 variant and the chip wake sequence.
 
-> **ATECC608B compatibility:** the legacy driver is still present under `#ifdef USE_ATECC608B` for development boards that have not yet been upgraded. The SE HAL interface is identical for both chips, so all higher-level code is portable.
+> **SE HAL abstraction:** the SE interface is compile-time selectable via `USE_ATECC608B`, `USE_SE051`, `USE_SE_STUB`, or `USE_SE_FPGA` build flags. All wallet logic above the HAL is portable across backends. See the SE Roadmap table above for planned integrations.
 
 ### Buttons (GPIO1 / GPIO2)
 Both buttons are simple normally-open tactile switches wired from their GPIO pin to GND. The ESP32-S3's internal pull-up resistors are enabled via `INPUT_PULLUP` — no external resistors are required. A press reads `LOW`; idle reads `HIGH`. A 180 ms software debounce delay is applied after each detected press.
@@ -115,9 +125,11 @@ Device →  Host  :  SIGNED:<base64>\n  |  REJECTED\n  |  ERROR:<code>\n
 
 ## I²C Bus Notes
 
-Both the SSD1306 and SE051C2 share the same I²C bus (SDA=GPIO8, SCL=GPIO9). This is safe because they have different addresses (`0x3C` vs `0x48`) and the ESP32-S3 is the sole bus master. Recommended bus pull-up resistors: **4.7 kΩ to 3V3** on both SDA and SCL. Many SSD1306 breakout boards include these on-board; if yours does, no additional pull-ups are needed. The SE051C2 bare die / module typically does not include them.
+The SSD1306 and ATECC608B share the same I²C bus (SDA=GPIO8, SCL=GPIO9). This is safe because they have different addresses (`0x3C` vs `0x64`) and the ESP32-S3 is the sole bus master. Recommended bus pull-up resistors: **4.7 kΩ to 3V3** on both SDA and SCL. Many SSD1306 breakout boards include these on-board; if yours does, no additional pull-ups are needed. The ATECC608B module typically does not include them.
 
-I²C clock speed: **400 kHz (Fast Mode)** is recommended. The SE051C2 supports up to 1 MHz; the SSD1306 is typically rated to 400 kHz.
+I²C clock speed: **400 kHz (Fast Mode)** is recommended. The ATECC608B supports up to 1 MHz; the SSD1306 is typically rated to 400 kHz.
+
+The Wire timeout is set to **50 ms** per transaction in the SE HAL (`Wire.setTimeOut(50)`). The ATECC608B wake token (broadcasting address 0x00) is sent first; if the chip does not ACK within the retry window the HAL returns `SE_ERR_COMM` and the wallet boots without SE (`seAvailable = false`). When the NXP SE051 is integrated, the SCP03 handshake will extend the init time slightly but remains well within the 50 ms per-transfer budget.
 
 ---
 
@@ -276,11 +288,13 @@ After eFuse burning, the device will:
 The device's About screen (Settings → About) displays:
 - **FW**: firmware version (`FIRMWARE_VERSION` in `version.h`)
 - **Hash**: first 16 hex chars of SHA-256 of the firmware binary (injected post-build by `scripts/post_build.py`)
-- **SE**: SE051C2 serial number (read from the secure element via `se051_get_serial()`)
+- **SE**: secure element serial number (read via `se051_get_serial()`)
 
 Users can verify the firmware hash against the published build artifacts to confirm they are running authentic software.
 
-The build hash is automatically injected into the firmware binary by the PlatformIO post-build script (`scripts/post_build.py`). The placeholder string `buildhash_plchld` in `version.h` is replaced with the first 16 characters of the SHA-256 hash of the final firmware binary.
+The build hash is injected by the PlatformIO post-build script (`scripts/post_build.py`). It replaces the `buildhash_plchld` placeholder in `version.h` with the first 16 hex characters of the firmware SHA-256.
+
+> **Known limitation:** `post_build.py` modifies the binary after the ESP-IDF bootloader app-image digest is computed. This invalidates the digest and causes the bootloader to reject the image (`rst:0x3`, Saved PC in bootloader IRAM). The script is therefore **disabled for the dev environment**. Before re-enabling it for production, `post_build.py` must be updated to recompute and re-seal the image digest with `esptool.py` after patching — or the build hash should instead be stored as an NVS key written at first boot.
 
 ### Disabling Secure Boot (Development)
 

@@ -2,6 +2,9 @@
 #include "se051_hal.h"
 #include "hmac_sha256.h"
 #include <string.h>
+#if !defined(USE_SE_STUB) && defined(ARDUINO) && defined(ESP32)
+#include <Arduino.h>
+#endif
 
 #define DEVICE_UID_LEN 8
 
@@ -16,6 +19,14 @@ void pin_get_device_uid(uint8_t uid[DEVICE_UID_LEN]) {
     0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF
   };
   memcpy(uid, test_uid, DEVICE_UID_LEN);
+}
+#elif defined(ARDUINO) && defined(ESP32)
+void pin_get_device_uid(uint8_t uid[DEVICE_UID_LEN]) {
+  uint64_t mac = ESP.getEfuseMac();
+  memset(uid, 0, DEVICE_UID_LEN);
+  for (int i = 0; i < 6; i++) {
+    uid[6 - i] = (mac >> (i * 8)) & 0xFF;
+  }
 }
 #endif
 

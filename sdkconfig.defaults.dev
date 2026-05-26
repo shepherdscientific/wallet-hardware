@@ -13,3 +13,9 @@ CONFIG_BOOTLOADER_LOG_LEVEL=3
 # serial_msg_t (data[8192]) is now in BSS via g_serial_msg, but this safety
 # margin guards against future large locals and deep call chains.
 CONFIG_ARDUINO_LOOP_STACK_SIZE=32768
+
+# Disable the framework task watchdog entirely in dev.
+# The IDF v5.x TWDT fires from IRAM (Saved PC 0x403cd9aa) before setup() runs
+# if the pre-setup init takes longer than the timeout.  Our own watchdog_init()
+# re-enables it with trigger_panic=true after setup() completes safely.
+CONFIG_ESP_TASK_WDT_EN=n

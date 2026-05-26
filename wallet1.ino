@@ -1,3 +1,4 @@
+#define SKIP_INTEGRITY_CHECK
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -265,15 +266,6 @@ unsigned long deviceIdEnteredMs = 0;
 
 const char *const TX_SEND_LABEL = "SEND";
 const char *const TX_CHANGE_LABEL = "CHANGE";
-
-// --- DEVICE UID (ESP32) ---
-void pin_get_device_uid(uint8_t uid[8]) {
-  uint64_t mac = ESP.getEfuseMac();
-  memset(uid, 0, 8);
-  for (int i = 0; i < 6; i++) {
-    uid[6 - i] = (mac >> (i * 8)) & 0xFF;
-  }
-}
 
 // --- TRANSACTION REVIEW DEMO PSBT ---
 // 1 input (100M sats) → 2 outputs (51.2M send + 48.75M change), fee=50K sats, RBF enabled
@@ -569,6 +561,7 @@ static void handle_provision_hash(const uint8_t *hash32) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("[BOOT] setup() start");
   serial_init();
   Wire.begin(SDA_PIN, SCL_PIN);
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
