@@ -10,7 +10,7 @@ A fully air-gapped Bitcoin hardware wallet built on the ESP32-S3, featuring a 12
 |---|---|---|
 | Microcontroller | ESP32-S3 (any module) | Application processor, USB CDC, BIP32/39 logic |
 | Display | SSD1306 128×64 OLED | Transaction review, address display, QR codes |
-| Secure Element | Microchip ATECC608B *(current)* | Key storage, ECDSA signing, TRNG, monotonic counter |
+| Secure Element | Microchip ATECC608B *(current)*, Tern. Core FPGA *(UART target)* | Key storage, ECDSA signing, TRNG, monotonic counter |
 | Button 1 | Tactile N/O (any 6×6 mm) | CONFIRM — select / sign / advance |
 | Button 2 | Tactile N/O (any 6×6 mm) | CANCEL — cycle / reject / back |
 
@@ -18,13 +18,13 @@ A fully air-gapped Bitcoin hardware wallet built on the ESP32-S3, featuring a 12
 
 ## Secure Element Roadmap
 
-CoinCube uses a compile-time–selectable SE HAL (`USE_ATECC608B` / `USE_SE051` / `USE_SE_STUB` / `USE_SE_FPGA`). Swapping the backend requires only a new HAL implementation file — all wallet logic above is portable.
+CoinCube uses a compile-time–selectable SE HAL (`USE_ATECC608B` / `USE_SE051` / `USE_SE_STUB` / `USE_TERNARYCORE_SE`). Swapping the backend requires only a new HAL implementation file — all wallet logic above is portable.
 
 | Phase | Chip | Status | Notes |
 |-------|------|--------|-------|
 | **Current** | Microchip ATECC608B | ✅ In use | I²C `0x64`, ECDSA P-256, TRNG, monotonic counter, slot-based key store |
 | **Near-term** | NXP SE051E / SE050E | 🔜 On order | GlobalPlatform SCP03 secure channel, native Schnorr support, post-quantum extensions (CRYSTALS-Kyber, CRYSTALS-Dilithium via SE051E PQC variant) |
-| **Research** | Tang Nano 9K FPGA custom SE | 🔬 In design | Ternary-logic co-processor targeting ternary-accelerated lattice-based PQC (NTRU / CRYSTALS variants); interfaces over SPI/I²C with the same HAL abstraction |
+| **Research** | Tang Nano 9K FPGA custom SE | 🚧 Phase 2 | UART `Serial1` GPIO16/17 @ 115200 8N1, AT-command protocol (`AT+RAND`, `AT+SIGN`, `AT+PUBKEY`, etc.). Ternary-logic co-processor targeting ternary-accelerated lattice-based PQC (NTRU / CRYSTALS variants). Full `tc_cmd()` command/response engine with host-mockable test harness (`test_ternarycore_se.cpp`). |
 
 The FPGA SE is a longer-horizon research track — the goal is a fully open, auditable, ternary-native cryptographic core that can be independently verified down to the gate level, unlike closed-source silicon SEs.
 
@@ -39,6 +39,8 @@ GPIO 8        │  I²C SDA      │  SSD1306 SDA  +  ATECC608B SDA
 GPIO 9        │  I²C SCL      │  SSD1306 SCL  +  ATECC608B SCL
 GPIO 1        │  BTN_CONFIRM  │  Tactile button → GND
 GPIO 2        │  BTN_CANCEL   │  Tactile button → GND
+GPIO 16       │  UART TX      │  TernaryCore FPGA UART_RX (header pin 39)
+GPIO 17       │  UART RX      │  TernaryCore FPGA UART_TX (header pin 38)
 3V3           │  Power        │  SSD1306 VCC  +  ATECC608B VCC
 GND           │  Ground       │  SSD1306 GND  +  ATECC608B GND  +  Buttons
 USB D+/D−     │  Native USB   │  USB-C connector (PSBT exchange / firmware)
@@ -80,6 +82,18 @@ USB D+/D−     │  Native USB   │  USB-C connector (PSBT exchange / firmware
   Both I²C devices share the same SDA/SCL lines. Pull-ups: 4.7 kΩ to 3V3 recommended.
 ```
 
+### TernaryCore FPGA SE Wiring (alternative build target)
+
+Build with `pio run -e ternarycore` to use the Tang Nano 9K FPGA as a UART-based secure element instead of the ATECC608B on I²C. The FPGA connects via a dedicated UART; it does not share the I²C bus.
+
+```
+ESP32-S3 GPIO16 (TX)  →  Tang Nano 9K header pin 39 (UART_RX)
+ESP32-S3 GPIO17 (RX)  ←  Tang Nano 9K header pin 38 (UART_TX)
+ESP32-S3 GND          ——  Tang Nano 9K GND
+```
+
+The FPGA communicates at 115200 8N1 using an AT-command protocol (`AT+RAND`, `AT+SIGN:ECDSA`, `AT+PUBKEY`, `AT+STORE`, etc.). See `ternarycore_se_hal.cpp` for the full HAL implementation and `test_ternarycore_se.cpp` for the host-based integration test suite.
+
 ---
 
 ## Component Notes
@@ -98,7 +112,7 @@ The ATECC608B is the current security boundary of the wallet. It communicates ov
 
 The ESP32-S3 only ever sees public keys and signatures. The HAL (`atecc608_hal_esp.cpp`, compiled under `-DUSE_ATECC608B`) implements the Microchip CryptoAuthLib-compatible wire protocol including the LSB-first CRC-16/8005 variant and the chip wake sequence.
 
-> **SE HAL abstraction:** the SE interface is compile-time selectable via `USE_ATECC608B`, `USE_SE051`, `USE_SE_STUB`, or `USE_SE_FPGA` build flags. All wallet logic above the HAL is portable across backends. See the SE Roadmap table above for planned integrations.
+> **SE HAL abstraction:** the SE interface is compile-time selectable via `USE_ATECC608B`, `USE_SE051`, `USE_SE_STUB`, or `USE_TERNARYCORE_SE` build flags. All wallet logic above the HAL is portable across backends. See the SE Roadmap table above for planned integrations.
 
 ### Buttons (GPIO1 / GPIO2)
 Both buttons are simple normally-open tactile switches wired from their GPIO pin to GND. The ESP32-S3's internal pull-up resistors are enabled via `INPUT_PULLUP` — no external resistors are required. A press reads `LOW`; idle reads `HIGH`. A 180 ms software debounce delay is applied after each detected press.
@@ -146,7 +160,7 @@ A decoupling capacitor of **100 nF** close to the SE051C2 VCC pin is strongly re
 
 ## Build Targets
 
-The project uses PlatformIO (`platformio.ini`) with two environments:
+The project uses PlatformIO (`platformio.ini`) with three environments:
 
 ```bash
 # Install PlatformIO (if not already installed)
@@ -158,7 +172,10 @@ pio run -e dev
 # Production build (WiFi disabled, OTA disabled, no mock data)
 pio run -e production
 
-# Build both environments (CI)
+# TernaryCore FPGA SE build (UART GPIO16/17, AT-command protocol)
+pio run -e ternarycore
+
+# Build all environments (CI)
 pio run
 ```
 

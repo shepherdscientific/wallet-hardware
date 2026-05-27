@@ -5,7 +5,8 @@
 ```bash
 pio run -e dev         # Development (WiFi OTA enabled, -DDEV_BUILD)
 pio run -e production  # Production (WiFi disabled, -DPRODUCTION_BUILD)
-pio run                # Build both (CI)
+pio run -e ternarycore # TernaryCore FPGA SE (UART GPIO16/17, -DUSE_TERNARYCORE_SE)
+pio run                # Build all (CI)
 pio run -e dev -t upload
 pio device monitor -b 115200
 ```
@@ -43,6 +44,7 @@ g++ -DUSE_SE_STUB -std=c++11 -I. <sources...> test_*.cpp -o test_*
 | `test_multisig` | `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp psbt_signer.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp wallet_storage.cpp test_multisig.cpp -o test_multisig` |
 | `test_tx_metadata` | `g++ -DUSE_SE_STUB -std=c++11 -I. psbt.cpp bip32.cpp sha256.cpp sha512.cpp hmac_sha256.cpp hmac_sha512.cpp ripemd160.cpp base58.cpp bech32.cpp se051_hal_stub.cpp address.cpp bip39.cpp test_tx_metadata.cpp -o test_tx_metadata` |
 | `test_fw_integrity` | `g++ -DUSE_SE_STUB -std=c++11 -I. se051_hal_stub.cpp fw_integrity.cpp test_fw_integrity.cpp -o test_fw_integrity` |
+| `test_ternarycore_se` | `g++ -DUSE_TERNARYCORE_SE -std=c++11 -I. ternarycore_se_hal.cpp test_ternarycore_se.cpp -o test_ternarycore_se` |
 
 Earlier test sources (`test_bip39`, `test_wallet_storage`, `test_bip32`, `test_address`, `test_pin_manager`, `test_psbt`, `test_psbt_signer`, `test_qr_renderer`) were deleted in commit `449db4e` — their sources are recoverable from git history if needed.
 
@@ -56,8 +58,10 @@ Run a single test: compile and run the matching command above, then `./test_*`.
 ### SEAL (Secure Element Abstraction Layer)
 
 - All SE access through `se051_hal.h` interface — **never call `Wire.*` directly** from higher-level code
-- Two backends selected at compile time:
+- Four backends selected at compile time:
+  - `-DUSE_ATECC608B` — real I2C to Microchip ATECC608B (addr 0x64, SDA=GPIO8, SCL=GPIO9)
   - `-DUSE_SE051` — real I2C to NXP SE051C2 (addr 0x48, SDA=GPIO8, SCL=GPIO9)
+  - `-DUSE_TERNARYCORE_SE` — real UART to TernaryCore FPGA SE (GPIO16 TX, GPIO17 RX, 115200 8N1, AT-command protocol)
   - `-DUSE_SE_STUB` — deterministic host mock (LCG random, fixed keys)
 - I2C retry: 3 attempts with 50ms back-off before returning `SE_ERR_COMM`
 - APDU framing per ISO 7816-4 (CLA/INS/P1/P2/Lc/data/Le); status word 0x9000 = success
@@ -111,6 +115,7 @@ Conventional commits with user-story scope: `feat(US-029):`, `chore(US-025):`, `
 | `USE_SE051` | Real SE051C2 I2C driver (SE addr 0x48) |
 | `USE_ATECC608B` | Legacy ATECC608B I2C driver (SE addr 0x64) for dev boards |
 | `USE_SE_STUB` | Host mock (tests only, LCG random) |
+| `USE_TERNARYCORE_SE` | TernaryCore FPGA SE over UART (GPIO16/17, AT-command protocol) |
 
 ## Key Module Map
 
@@ -120,7 +125,7 @@ Conventional commits with user-story scope: `feat(US-029):`, `chore(US-025):`, `
 | Wallet crypto | `bip32` (HD derivation), `bip39` (mnemonic), `bip39_english` (wordlist) |
 | Addresses | `address`, `base58`, `bech32` |
 | Bitcoin protocol | `psbt` (BIP174/370 parser), `psbt_signer` (BIP143/341 signing) |
-| SE hardware | `se051_hal`, `se051_hal_esp`, `se051_hal_stub` |
+| SE hardware | `se051_hal`, `se051_hal_esp`, `se051_hal_stub`, `atecc608_hal_esp`, `ternarycore_se_hal` |
 | Wallet logic | `wallet_storage`, `pin_manager`, `account_manager`, `settings`, `balance`, `tx_history` |
 | Display | `qrcode` (C lib, extern "C"), `qr_renderer` |
 | Transport | `serial_transport` (USB CDC), `base64` (encoding) |
