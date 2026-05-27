@@ -3,9 +3,10 @@
 ## Build & Flash
 
 ```bash
-pio run -e dev         # Development (WiFi OTA enabled, -DDEV_BUILD)
-pio run -e production  # Production (WiFi disabled, -DPRODUCTION_BUILD)
+pio run -e dev         # Development (WiFi OTA enabled, -DDEV_BUILD -DUSE_ATECC608B)
+pio run -e production  # Production (WiFi disabled, -DPRODUCTION_BUILD -DUSE_ATECC608B)
 pio run -e ternarycore # TernaryCore FPGA SE (UART GPIO16/17, -DUSE_TERNARYCORE_SE)
+pio run -e nxpse       # NXP SE051 (I2C 0x48, -DUSE_SE051 — optional, not available)
 pio run                # Build all (CI)
 pio run -e dev -t upload
 pio device monitor -b 115200

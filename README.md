@@ -166,14 +166,17 @@ The project uses PlatformIO (`platformio.ini`) with three environments:
 # Install PlatformIO (if not already installed)
 pip install platformio
 
-# Development build (WiFi OTA enabled, mock data allowed)
+# Development build (WiFi OTA enabled, ATECC608B I2C SE)
 pio run -e dev
 
-# Production build (WiFi disabled, OTA disabled, no mock data)
+# Production build (WiFi disabled, OTA disabled, ATECC608B I2C SE)
 pio run -e production
 
 # TernaryCore FPGA SE build (UART GPIO16/17, AT-command protocol)
 pio run -e ternarycore
+
+# NXP SE051 build (I2C addr 0x48 — optional, chip not currently available)
+pio run -e nxpse
 
 # Build all environments (CI)
 pio run
