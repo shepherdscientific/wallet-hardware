@@ -15,11 +15,18 @@ extern "C" {
   #define SE051_HAL_ACTIVE 1
 #elif defined(USE_SE_STUB)
   #define SE051_HAL_ACTIVE 1
+#elif defined(USE_TERNARYCORE_SE)
+  // TernaryCore Secure Element — FPGA-based PQC SE on Tang Nano 9K.
+  // Physical interface: UART (Serial1) instead of I2C.
+  // AT-command protocol is defined in Phase 2; this build path provides
+  // the infrastructure so firmware can be compiled and tested now.
+  #define SE051_HAL_ACTIVE 1
+  #define SE_IS_UART_BASED 1
 #else
-  #error "Define USE_SE051, USE_ATECC608B, or USE_SE_STUB build flag"
+  #error "Define USE_SE051, USE_ATECC608B, USE_TERNARYCORE_SE, or USE_SE_STUB build flag"
 #endif
 
-// ─── I2C Constants ───────────────────────────────────────────────────────
+// ─── I2C Constants (not used for USE_TERNARYCORE_SE) ─────────────────────
 #ifdef USE_ATECC608B
   #define SE051_I2C_ADDR        0x64  // this chip's programmed 7-bit address
 #else
@@ -27,6 +34,22 @@ extern "C" {
 #endif
 #define SE051_I2C_RETRY_COUNT 3
 #define SE051_I2C_RETRY_MS    50
+
+// ─── UART Constants (USE_TERNARYCORE_SE only) ────────────────────────────
+// Serial1 on the ESP32-S3; pins can be overridden in build flags.
+// Tang Nano 9K connection: GPIO_TC_TX → Tang header UART_RX pin,
+//                          GPIO_TC_RX → Tang header UART_TX pin, GND shared.
+// (Tang Nano 9K onboard UART on physical pins 17/18 goes to its USB bridge —
+//  use header-accessible IO pins on the Tang side instead; see ternarycore README.)
+#ifndef TC_SE_UART_TX_PIN
+  #define TC_SE_UART_TX_PIN  16   // ESP32-S3 GPIO16 → TernaryCore UART_RX
+#endif
+#ifndef TC_SE_UART_RX_PIN
+  #define TC_SE_UART_RX_PIN  17   // ESP32-S3 GPIO17 ← TernaryCore UART_TX
+#endif
+#define TC_SE_UART_BAUD      115200
+#define TC_SE_UART_TIMEOUT_MS  3000  // response timeout for info queries
+#define TC_SE_SIGN_TIMEOUT_MS 10000  // longer timeout for signing operations
 
 // ─── Key Object IDs ──────────────────────────────────────────────────────
 #define SE051_KEY_BIP32_MASTER  0x01
