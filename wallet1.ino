@@ -94,10 +94,12 @@ enum WalletState {
   SETTINGS_FACTORY_RESET_CONFIRM,
   SETTINGS_FACTORY_RESET_SURE,
   TX_HISTORY,
-  WATCHDOG_RECOVERY
+  WATCHDOG_RECOVERY,
+  SE_ERROR   // Secure element failed to initialise — shown instead of BOOT_MENU
 };
 WalletState currentState = PIN_SETUP;
 bool seAvailable = false;
+se051_err_t seInitErr = SE_OK;  // Last SE init error code, shown on SE_ERROR screen
 
 int menuIndex = 0;
 const int TOTAL_MENU_ITEMS = 9;
@@ -573,8 +575,8 @@ void setup() {
 
   showBootSplash();
 
-  se051_err_t seErr = se051_init();
-  seAvailable = (seErr == SE_OK);
+  seInitErr = se051_init();
+  seAvailable = (seInitErr == SE_OK);
 
 #ifndef SKIP_INTEGRITY_CHECK
   run_integrity_check();
@@ -601,7 +603,9 @@ void setup() {
   }
 
   if (!seAvailable) {
-    currentState = BOOT_MENU;
+    // Route to a dedicated error screen so the user gets a clear message
+    // instead of a menu they can cycle but never confirm.
+    currentState = SE_ERROR;
   } else if (pin_is_set()) {
     currentState = PIN_ENTRY;
     pinAttempts = pin_get_attempts();
@@ -824,12 +828,34 @@ void handleNavigation() {
   delay(180);
 
   switch (currentState) {
+    case SE_ERROR:
+      // Both buttons attempt a soft SE re-init so the user can recover
+      // without a full power cycle if the failure was transient (e.g. I2C glitch).
+      if (confirmPressed || cancelPressed) {
+        seInitErr = se051_init();
+        seAvailable = (seInitErr == SE_OK);
+        if (seAvailable) {
+          // Recovered — continue to normal boot decision
+          if (pin_is_set()) {
+            currentState = PIN_ENTRY;
+            pinAttempts = pin_get_attempts();
+            pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+            pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+            pinPosition = 0;
+            pinDigitValue = 0;
+          } else {
+            currentState = BOOT_MENU;
+          }
+        }
+        // If still failing, stay on SE_ERROR — screen will refresh with same error
+      }
+      break;
+
     case BOOT_MENU:
       if (cancelPressed) {
         menuIndex = (menuIndex + 1) % 2;
       } else if (confirmPressed) {
-        if (!seAvailable) {
-        } else if (menuIndex == 0) {
+        if (menuIndex == 0) {
           startMnemonicCeremony();
         } else {
           startRestoreProcess();
@@ -1578,7 +1604,7 @@ void handleNavigation() {
     case WATCHDOG_RECOVERY:
       if (confirmPressed || cancelPressed) {
         if (!seAvailable) {
-          currentState = BOOT_MENU;
+          currentState = SE_ERROR;
         } else {
           currentState = PIN_ENTRY;
           pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
@@ -1636,6 +1662,24 @@ void renderCurrentState() {
   display.setTextSize(1);
 
   switch (currentState) {
+    case SE_ERROR:
+      display.setCursor(0, 0);
+      display.setTextSize(1);
+      display.println("!! SE COMM FAILURE !!");
+      display.println("---------------------");
+      display.setCursor(0, 18);
+      display.setTextSize(2);
+      display.println("SE FAULT");
+      display.setTextSize(1);
+      display.setCursor(0, 40);
+      display.print("Err: 0x");
+      display.println(seInitErr, HEX);
+      display.setCursor(0, 50);
+      display.print("Press any key: retry");
+      display.setCursor(0, 58);
+      display.print("Power cycle if stuck");
+      break;
+
     case BOOT_MENU:
       display.setCursor(0, 0);
       display.println("COINCUBE WALLET");
@@ -1661,11 +1705,7 @@ void renderCurrentState() {
       }
       display.setTextColor(SSD1306_WHITE);
       display.setCursor(0, 56);
-      if (!seAvailable) {
-        display.print("No Secure Element");
-      } else {
-        display.print("CANCEL=cycle CONFIRM=select");
-      }
+      display.print("CANCEL=cycle CONFIRM=select");
       break;
 
     case MNEMONIC_DISPLAY:
@@ -2773,8 +2813,8 @@ void renderCurrentState() {
       display.println("Unexpected restart.");
       display.setCursor(0, 36);
       if (!seAvailable) {
-        display.println("No Secure Element");
-        display.println("detected.");
+        display.println("SE offline.");
+        display.println("Press any key.");
       } else {
         display.println("Re-enter PIN to");
         display.println("continue.");
