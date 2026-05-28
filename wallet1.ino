@@ -10,6 +10,7 @@
 #if !defined(DEV_BUILD) && defined(ESP32)
 #include <esp_wifi.h>
 #endif
+#include <esp_system.h>   // esp_random() fallback TRNG
 #include "se051_hal.h"
 #include "pin_manager.h"
 #include "wallet_storage.h"
@@ -2951,7 +2952,13 @@ void startMnemonicCeremony() {
   lastActivityMs = millis();
 
   if (!bip39_generate(mnemonicWords)) {
-    currentState = WALLET_WIPED;
+    // SE failed to produce entropy mid-operation (passed init but failed
+    // during the actual GET_RND command).  WALLET_WIPED is wrong here —
+    // nothing was erased — so route to SE_ERROR instead so the standard
+    // "press any button to retry" recovery path handles it cleanly.
+    seInitErr = se051_init();          // attempt a soft re-init
+    seAvailable = (seInitErr == SE_OK);
+    currentState = SE_ERROR;
     return;
   }
   currentState = MNEMONIC_DISPLAY;
@@ -2965,8 +2972,14 @@ void startVerification() {
     uint8_t rnd;
     bool distinct;
     do {
-      se051_get_random(&rnd, 1);
-      rnd = rnd % 24;
+      // Prefer SE hardware RNG; fall back to ESP32 built-in TRNG if SE is
+      // unavailable (e.g. after a transient error).  Both are acceptable for
+      // picking verification word indices — this is not key material.
+      if (seAvailable && se051_get_random(&rnd, 1) == SE_OK) {
+        rnd = rnd % 24;
+      } else {
+        rnd = (uint8_t)(esp_random() % 24);
+      }
       distinct = true;
       for (int j = 0; j < i; j++) {
         if (mnemonicVerifyIndices[j] == rnd) {
