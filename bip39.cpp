@@ -400,6 +400,21 @@ uint16_t bip39_find_prefix(const char *prefix, uint16_t *first_match) {
   return count;
 }
 
+uint8_t bip39_prefix_match(const char *prefix, uint16_t *indices, uint8_t max_results) {
+  if (prefix == NULL || prefix[0] == '\0') return 0;
+  if (indices == NULL || max_results == 0) return 0;
+
+  uint16_t first = 0;
+  uint16_t count = bip39_find_prefix(prefix, &first);
+  if (count == 0) return 0;
+
+  uint8_t result_count = (count < max_results) ? (uint8_t)count : max_results;
+  for (uint8_t i = 0; i < result_count; i++) {
+    indices[i] = first + i;
+  }
+  return result_count;
+}
+
 bool bip39_generate(char wordlist[BIP39_MNEMONIC_WORDS][BIP39_WORD_MAX_LEN]) {
   uint8_t entropy[BIP39_ENTROPY_LEN];
   uint8_t checksum_data[BIP39_CHECKSUM_LEN];

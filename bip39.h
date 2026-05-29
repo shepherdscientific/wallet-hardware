@@ -25,6 +25,8 @@ uint16_t bip39_word_to_index(const char *word);
 
 uint16_t bip39_find_prefix(const char *prefix, uint16_t *first_match);
 
+uint8_t bip39_prefix_match(const char *prefix, uint16_t *indices, uint8_t max_results);
+
 #ifdef __cplusplus
 }
 #endif

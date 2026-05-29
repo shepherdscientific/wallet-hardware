@@ -686,3 +686,38 @@ US-031: ATECC608B Firmware Hash Provisioning and Slot-Read (2026-05-25)
   (US-031)" subsection under SEAL.
 - Note: aider-review.sh is not present in the tree; review step skipped
   (consistent with prior commits e.g. 8e051af which also did not run it).
+
+US-032: Predictive BIP39 Keyboard for Mnemonic Entry and Restore (2026-05-29)
+- Added bip39_prefix_match() to bip39.cpp/h: wraps bip39_find_prefix(),
+  returns up to max_results index entries. Handles NULL/empty edge cases.
+- wallet1.ino changes:
+  - Added BIP39_PREDICTIVE_INPUT state to WalletState enum — unified state
+    for both restore word entry and mnemonic verify word selection
+  - Added predictive keyboard state variables (prefix, letter, match indices,
+    select mode, long-press tracking, isVerify flag)
+  - handleNavigation: new BIP39_PREDICTIVE_INPUT case with letter cycling
+    (a-z + backspace '<'), prefix building, auto-advance to select mode when
+    2-3 matches, auto-select when exactly 1 match, long-press CANCEL (2s)
+    clears entire prefix
+  - renderCurrentState: renders VERIFY SEED or RESTORE WALLET header based on
+    predictiveIsVerify, prefix line with highlighted current letter/backspace,
+    candidate words with select-mode highlight, match count indicator
+  - predictiveWordSelected(): handles verify (compare with mnemonicWords[pos],
+    advance verify step or fail back to MNEMONIC_DISPLAY) and restore (store
+    word, advance to next word, validate checksum at word 24)
+  - updatePredictiveMatches(): computes search string from prefix+letter,
+    calls bip39_prefix_match for visible results + bip39_find_prefix for total
+  - startRestoreProcess() now initializes predictive state → BIP39_PREDICTIVE_INPUT
+  - startVerification() now initializes predictive state with predictiveIsVerify=true
+  - RESTORE_ERROR retry goes to BIP39_PREDICTIVE_INPUT
+  - loop() timeout guards updated: 30s display-off and 5min restore abort
+    both cover BIP39_PREDICTIVE_INPUT with appropriate isVerify flags
+  - Dead state handlers removed: MNEMONIC_VERIFY, MNEMONIC_RESTORE_LETTER,
+    MNEMONIC_RESTORE_WORD (navigation and render cases). Enum values retained.
+  - Fixed orphaned RESTORE_PASSPHRASE render code (detached case label)
+- test_bip39.cpp: 11 host tests covering prefix matching, edge cases (NULL/
+  empty/zero max_results/clipping), single/multiple matches, case sensitivity.
+  All 11 pass.
+- All 51 existing unit tests pass (balance 11, settings 10, account_manager 12,
+  tx_history 11, watchdog 7).
+- pio run -e dev builds clean.
