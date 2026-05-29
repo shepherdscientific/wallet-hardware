@@ -1769,17 +1769,16 @@ void renderCurrentState() {
       break;
 
     case BIP39_PREDICTIVE_INPUT: {
-      // Title and progress
+      // ── Title + progress (y=0..26) ───────────────────────────────────
       display.setCursor(0, 0);
       if (predictiveIsVerify) {
         display.println("VERIFY SEED");
         display.println("---------------------");
+        // Condense to one line so y=28 is free for the prefix display.
         display.setCursor(0, 18);
         display.print("Step ");
         display.print(mnemonicVerifyStep + 1);
-        display.print(" of 3");
-        display.setCursor(0, 28);
-        display.print("Word #");
+        display.print("/3  Word #");
         display.print(mnemonicVerifyIndices[mnemonicVerifyStep] + 1);
         display.print("?");
       } else {
@@ -1791,28 +1790,57 @@ void renderCurrentState() {
         display.print(" of 24");
       }
 
-      // Prefix display line
-      display.setCursor(0, 36);
-      if (predictivePrefixLen == 0 && predictiveLetter == 'a') {
-        display.print("_");
-      } else {
-        display.print(predictivePrefix);
-        if (predictiveLetter == '<') {
-          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-          display.print("< DEL");
-          display.setTextColor(SSD1306_WHITE);
+      // ── Prefix line (y=28): committed chars + current letter + slots ─
+      // Shows e.g.  s t [a] _   where [a] is the letter under the cursor.
+      display.setCursor(0, 28);
+      for (uint8_t i = 0; i < 4; i++) {
+        if (i < predictivePrefixLen) {
+          // Committed letter — plain text.
+          display.print(predictivePrefix[i]);
+          display.print(' ');
+        } else if (i == predictivePrefixLen) {
+          // Current (un-committed) letter — inverted highlight.
+          if (predictiveLetter == '<') {
+            display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+            display.print('<');
+            display.setTextColor(SSD1306_WHITE);
+          } else {
+            display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+            display.print(predictiveLetter);
+            display.setTextColor(SSD1306_WHITE);
+          }
+          display.print(' ');
         } else {
-          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-          display.print(predictiveLetter);
-          display.setTextColor(SSD1306_WHITE);
-        }
-        uint8_t visible = predictivePrefixLen + 1;
-        for (uint8_t i = visible; i < 4; i++) {
-          display.print('_');
+          // Future slot placeholder.
+          display.print("_ ");
         }
       }
 
-      // Candidate words display
+      // ── Alphabet strip (y=36): 9-letter window centered on current ──
+      // Positions: a=0 … z=25, '<'(backspace)=26.
+      // User always sees 4 letters before and 4 letters after the cursor
+      // so they know exactly where they are in the alphabet at a glance.
+      {
+        int curPos   = (predictiveLetter == '<') ? 26 : (int)(predictiveLetter - 'a');
+        int winStart = curPos - 4;
+        int winEnd   = curPos + 4;
+        // Clamp window to [0, 26] and slide rather than truncate.
+        if (winStart < 0)  { winEnd   -= winStart; winStart = 0; }
+        if (winEnd   > 26) { winStart -= (winEnd - 26); winEnd = 26; }
+        if (winStart < 0)   winStart = 0;
+
+        display.setCursor(0, 36);
+        for (int i = winStart; i <= winEnd; i++) {
+          char c = (i == 26) ? '<' : (char)('a' + i);
+          bool hi = (i == curPos);
+          if (hi) display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print(c);
+          if (hi) display.setTextColor(SSD1306_WHITE);
+          display.print(' ');
+        }
+      }
+
+      // ── Candidate words (y=48) ───────────────────────────────────────
       display.setCursor(0, 48);
       if (predictiveMatchCount > 0) {
         for (uint8_t i = 0; i < predictiveMatchCount && i < 3; i++) {
@@ -1823,21 +1851,19 @@ void renderCurrentState() {
           } else {
             display.print(bip39_wordlist[predictiveMatchIndices[i]]);
           }
-          if (i + 1 < predictiveMatchCount && i < 2) display.print(" ");
+          if (i + 1 < predictiveMatchCount && i < 2) display.print(' ');
         }
-        if (predictiveTotalCount > 3) {
-          display.print(" ...");
-        }
+        if (predictiveTotalCount > 3) display.print(" +");
       } else if (predictivePrefixLen > 0 || predictiveLetter != 'a') {
-        display.print("(no matches)");
+        display.print("(no match)");
       }
 
-      // Footer
+      // ── Footer hint (y=56) ───────────────────────────────────────────
       display.setCursor(0, 56);
       if (predictiveSelectMode) {
-        display.print("CONFIRM=select CANCEL=next");
+        display.print("OK=pick  CANCEL=back");
       } else {
-        display.print("CANCEL=letter CONFIRM=select");
+        display.print("CANCEL=next  OK=confirm");
       }
       break;
     }
