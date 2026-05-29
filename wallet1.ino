@@ -639,6 +639,23 @@ void loop() {
     handle_provision_hash(g_serial_msg.data);
   }
 
+  // ── USB desktop-app handshake (US-HW-011) ────────────────────────────
+  // Respond to probe / info queries at any time so the desktop app can
+  // detect the device regardless of which wallet state is active.
+  if (g_serial_msg.cmd == SERIAL_CMD_GET_INFO) {
+    // Bare READY triggers the Rust legacy_handshake path in coincube_hw.rs,
+    // which follows up with GET_XPUB:m/84'/0'/0'.
+    serial_send_ready();
+  } else if (g_serial_msg.cmd == SERIAL_CMD_GET_XPUB) {
+    static char s_xpub_buf[XPUB_STR_LEN];
+    if (wallet_get_account_xpub(s_xpub_buf)) {
+      serial_send_xpub(s_xpub_buf);
+    } else {
+      // Wallet not yet initialised — device detected but xpub unavailable.
+      serial_send_error(1);
+    }
+  }
+
 #ifdef DEV_BUILD
   if (WiFi.status() == WL_CONNECTED) {
     ArduinoOTA.handle();

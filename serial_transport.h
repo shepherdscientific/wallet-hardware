@@ -20,6 +20,12 @@ typedef enum {
     SERIAL_CMD_TX_HISTORY       = 5,
     SERIAL_CMD_TX_ENTRY         = 6,
     SERIAL_CMD_PROVISION_HASH   = 7,
+    /// Desktop app sends GET_INFO to detect the device.  Firmware replies with
+    /// bare "READY" so the Rust probe_port() succeeds within its 1-second window.
+    SERIAL_CMD_GET_INFO         = 8,
+    /// Desktop app sends GET_XPUB:<path> (legacy handshake).  Firmware replies
+    /// with "XPUB:<base58check>" using the xpub stored during wallet setup.
+    SERIAL_CMD_GET_XPUB         = 9,
 } serial_cmd_t;
 
 typedef struct {
@@ -51,6 +57,9 @@ void serial_send_tx_history_request(const char *address);
 void serial_send_hash_ok(void);
 
 void serial_send_hash_err(void);
+
+/// Reply to GET_XPUB: sends "XPUB:<xpub_str>\n".
+void serial_send_xpub(const char *xpub_str);
 
 serial_msg_t serial_poll(void);
 

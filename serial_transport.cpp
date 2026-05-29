@@ -138,6 +138,16 @@ void serial_send_hash_err(void) {
 #endif
 }
 
+void serial_send_xpub(const char *xpub_str) {
+    if (!xpub_str) return;
+#if defined(ARDUINO) && defined(ESP32)
+    SERIAL_PORT.print("XPUB:");
+    SERIAL_PORT.println(xpub_str);
+#else
+    printf("XPUB:%s\n", xpub_str);
+#endif
+}
+
 static int hex_nibble(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
@@ -204,6 +214,18 @@ static void parse_line_into(const char *line, size_t line_len,
                 out->cmd      = SERIAL_CMD_PROVISION_HASH;
                 out->data_len = 32;
             }
+        }
+    } else if (strncmp(line, "GET_INFO", 8) == 0 && line_len == 8) {
+        out->cmd      = SERIAL_CMD_GET_INFO;
+        out->data_len = 0;
+    } else if (strncmp(line, "GET_XPUB:", 9) == 0) {
+        // Store the path string (e.g. "m/84'/0'/0'") in data.
+        size_t path_len = line_len - 9;
+        if (path_len < sizeof(out->data)) {
+            memcpy(out->data, line + 9, path_len);
+            out->data[path_len] = '\0';
+            out->cmd      = SERIAL_CMD_GET_XPUB;
+            out->data_len = path_len;
         }
     } else if (strncmp(line, "TX:", 3) == 0) {
         const char *p   = line + 3;
