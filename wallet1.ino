@@ -832,6 +832,7 @@ void loop() {
       currentState == PQC_STATUS ||
       currentState == TX_HISTORY ||
       currentState == MNEMONIC_DISPLAY ||
+      currentState == BIP39_PREDICTIVE_INPUT ||
       currentState == SETTINGS_MENU ||
       currentState == SETTINGS_TIMEOUT ||
       currentState == SETTINGS_AUTOLOCK ||
@@ -839,24 +840,28 @@ void loop() {
       currentState == SETTINGS_ABOUT ||
       currentState == SETTINGS_FACTORY_RESET_CONFIRM ||
       currentState == SETTINGS_FACTORY_RESET_SURE) {
-    uint32_t auto_lock_ms = settings_auto_lock_ms(settings_get_auto_lock());
-    if (auto_lock_ms > 0 &&
-        millis() - lastActivityMs > auto_lock_ms) {
-      currentState = PIN_ENTRY;
-      pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
-      pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
-      pinPosition = 0;
-      pinDigitValue = 0;
-      pinAttempts = pin_get_attempts();
+    // Auto-lock and display timeout don't apply mid-restore/verify — interrupting
+    // a 24-word entry would be more disruptive than the security benefit.
+    if (currentState != BIP39_PREDICTIVE_INPUT) {
+      uint32_t auto_lock_ms = settings_auto_lock_ms(settings_get_auto_lock());
+      if (auto_lock_ms > 0 &&
+          millis() - lastActivityMs > auto_lock_ms) {
+        currentState = PIN_ENTRY;
+        pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+        pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+        pinPosition = 0;
+        pinDigitValue = 0;
+        pinAttempts = pin_get_attempts();
+      }
+
+      uint32_t disp_ms = settings_disp_timeout_ms(settings_get_display_timeout());
+      if (disp_ms > 0 && displayOn &&
+          millis() - lastActivityMs > disp_ms) {
+        displayOn = false;
+      }
     }
 
-    uint32_t disp_ms = settings_disp_timeout_ms(settings_get_display_timeout());
-    if (disp_ms > 0 && displayOn &&
-        millis() - lastActivityMs > disp_ms) {
-      displayOn = false;
-    }
-
-    // US-035: screensaver after SCREENSAVER_TIMEOUT_MS of inactivity
+    // US-035: screensaver fires from all idle states including the keyboard.
     if (displayOn && screensaver_should_activate(millis() - lastActivityMs)) {
       screensaverPrevState = currentState;
       screensaver_reset();
@@ -902,6 +907,20 @@ void enterDeviceIdDisplay() {
 void handleNavigation() {
   bool confirmPressed = (digitalRead(BTN_CONFIRM) == LOW);
   bool cancelPressed = (digitalRead(BTN_CANCEL) == LOW);
+
+  // Edge-detection for the predictive keyboard: the BIP39 case never reaches
+  // its own "else { reset }" branch on frames where no button is pressed
+  // (the early return below fires first).  Reset here, before the return.
+  if (currentState == BIP39_PREDICTIVE_INPUT) {
+    if (!cancelPressed && predictiveCancelHoldStart != 0) {
+      predictiveCancelHoldStart  = 0;
+      predictiveLongPressDone    = false;
+      predictiveCancelShortFired = false;
+    }
+    if (!confirmPressed) {
+      confirmPressedLastFrame = false;
+    }
+  }
 
   if (!confirmPressed && !cancelPressed) return;
 
