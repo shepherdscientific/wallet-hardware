@@ -206,6 +206,8 @@ uint8_t predictiveHighlight = 0;
 bool predictiveSelectMode = false;
 unsigned long predictiveCancelHoldStart = 0;
 bool predictiveLongPressDone = false;
+bool predictiveCancelShortFired = false;  // prevents multi-fire on held CANCEL
+bool confirmPressedLastFrame    = false;  // edge-detect for CONFIRM in predictive keyboard
 bool predictiveIsVerify = false;
 
 // --- PASSPHRASE ENTRY STATE ---
@@ -1067,20 +1069,26 @@ void handleNavigation() {
 
       if (cancelPressed) {
         if (predictiveCancelHoldStart == 0) {
+          // Rising edge: start timing this press.
           predictiveCancelHoldStart = millis();
-          predictiveLongPressDone = false;
+          predictiveLongPressDone   = false;
+          predictiveCancelShortFired = false;
         }
 
-        // Bug fix: long-press threshold is 1 s per US-032 spec (was 2000 ms).
         if (!predictiveLongPressDone && (millis() - predictiveCancelHoldStart) >= 1000) {
+          // Long-press (≥1 s): clear entire prefix and reset to 'a'.
           predictivePrefixLen = 0;
           predictivePrefix[0] = '\0';
           predictiveLetter = 'a';
           predictiveSelectMode = false;
           predictiveHighlight = 0;
+          predictiveCancelShortFired = false;
+          confirmPressedLastFrame    = false;
           updatePredictiveMatches();
           predictiveLongPressDone = true;
-        } else if (!predictiveLongPressDone) {
+        } else if (!predictiveLongPressDone && !predictiveCancelShortFired) {
+          // Short-press: fire exactly once per physical press (edge-detection).
+          predictiveCancelShortFired = true;
           if (predictiveSelectMode) {
             // Cycle through candidates; wrapping past the last one exits
             // selectMode back to letter cycling so users are never stuck.
@@ -1105,13 +1113,17 @@ void handleNavigation() {
           }
         }
       } else {
-        predictiveCancelHoldStart = 0;
-        predictiveLongPressDone = false;
+        // Falling edge: reset all press-tracking state.
+        predictiveCancelHoldStart  = 0;
+        predictiveLongPressDone    = false;
+        predictiveCancelShortFired = false;
       }
 
-      if (confirmPressed) {
-        predictiveCancelHoldStart = 0;
-        predictiveLongPressDone = false;
+      // CONFIRM fires once per physical press (same edge-detection as CANCEL).
+      if (confirmPressed && !confirmPressedLastFrame) {
+        predictiveCancelHoldStart  = 0;
+        predictiveLongPressDone    = false;
+        predictiveCancelShortFired = false;
 
         if (predictiveSelectMode) {
           uint16_t selectedIdx = predictiveMatchIndices[predictiveHighlight];
@@ -1141,6 +1153,7 @@ void handleNavigation() {
           }
         }
       }
+      confirmPressedLastFrame = confirmPressed;
       break;
 
     case PASSPHRASE_PROMPT:
@@ -3130,6 +3143,8 @@ void startVerification() {
   predictiveLetter = 'a';
   predictiveSelectMode = false;
   predictiveHighlight = 0;
+  predictiveCancelShortFired = false;
+  confirmPressedLastFrame    = false;
   predictiveIsVerify = true;
   updatePredictiveMatches();
   currentState = BIP39_PREDICTIVE_INPUT;
@@ -3166,6 +3181,21 @@ void updatePredictiveMatches() {
 
   predictiveMatchCount = bip39_prefix_match(search, predictiveMatchIndices, 3);
   predictiveTotalCount = bip39_find_prefix(search, NULL);
+
+  // Sort the up-to-3 candidates by word length ascending so that the shorter
+  // (more specific) match is always at position 0.  Insertion sort over at
+  // most 3 elements — essentially free.  Tiebreak stays alphabetical because
+  // bip39_prefix_match already returns words in wordlist (alphabetical) order.
+  for (uint8_t i = 1; i < predictiveMatchCount; i++) {
+    uint16_t key = predictiveMatchIndices[i];
+    uint8_t  key_len = (uint8_t)strlen(bip39_wordlist[key]);
+    int8_t j = (int8_t)i - 1;
+    while (j >= 0 && (uint8_t)strlen(bip39_wordlist[predictiveMatchIndices[j]]) > key_len) {
+      predictiveMatchIndices[j + 1] = predictiveMatchIndices[j];
+      j--;
+    }
+    predictiveMatchIndices[j + 1] = key;
+  }
 }
 
 void predictiveWordSelected(uint16_t selectedIdx) {
@@ -3209,6 +3239,8 @@ void predictiveWordSelected(uint16_t selectedIdx) {
   predictiveLetter = 'a';
   predictiveSelectMode = false;
   predictiveHighlight = 0;
+  predictiveCancelShortFired = false;
+  confirmPressedLastFrame    = false;
   updatePredictiveMatches();
 }
 
@@ -3258,6 +3290,8 @@ void startRestoreProcess() {
   predictiveLetter = 'a';
   predictiveSelectMode = false;
   predictiveHighlight = 0;
+  predictiveCancelShortFired = false;
+  confirmPressedLastFrame    = false;
   predictiveIsVerify = false;
   updatePredictiveMatches();
   currentState = BIP39_PREDICTIVE_INPUT;
