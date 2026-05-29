@@ -32,6 +32,7 @@
 #include "esp_partition.h"
 #include "sha256.h"
 #include "fw_integrity.h"
+#include "screensaver.h"
 
 // --- HARDWARE CONFIG ---
 #define SCREEN_WIDTH 128
@@ -97,7 +98,8 @@ enum WalletState {
   TX_HISTORY,
   WATCHDOG_RECOVERY,
   SE_ERROR,  // Secure element failed to initialise — shown instead of BOOT_MENU
-  BIP39_PREDICTIVE_INPUT  // US-032: Unified predictive BIP39 keyboard (restore & verify)
+  BIP39_PREDICTIVE_INPUT,  // US-032: Unified predictive BIP39 keyboard (restore & verify)
+  SCREENSAVER  // US-035: Bouncing logo screensaver
 };
 WalletState currentState = PIN_SETUP;
 bool seAvailable = false;
@@ -131,6 +133,54 @@ uint8_t mnemonicVerifyStep = 0;
 uint8_t mnemonicVerifyScroll = 0;
 bool displayOn = true;
 unsigned long lastActivityMs = 0;
+
+// --- US-035: SCREENSAVER STATE ---
+WalletState screensaverPrevState = MAIN_MENU;
+int16_t  ssOldX = -1, ssOldY = -1;  // last rendered position for I2C draw-on-change optimisation
+
+// cube_bitmap: 40×40 monochrome XBM (LSB-first, 5 bytes per row)
+static const uint8_t cube_bitmap[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 0
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 1
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 2
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 3
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 4
+  0x00, 0x00, 0x04, 0x00, 0x00,  // row 5
+  0x00, 0x00, 0x3f, 0x00, 0x00,  // row 6
+  0x00, 0xc0, 0xff, 0x01, 0x00,  // row 7
+  0x00, 0xf0, 0xff, 0x07, 0x00,  // row 8
+  0x00, 0xf8, 0xff, 0x1f, 0x00,  // row 9
+  0x00, 0xfe, 0xff, 0x3f, 0x00,  // row 10
+  0x00, 0xfe, 0xff, 0x7f, 0x00,  // row 11
+  0x80, 0xff, 0xff, 0x3f, 0x00,  // row 12
+  0x80, 0xff, 0xff, 0x1f, 0x00,  // row 13
+  0x80, 0xff, 0xff, 0xe7, 0x01,  // row 14
+  0x80, 0xff, 0xff, 0x41, 0x01,  // row 15
+  0xc0, 0xff, 0x3f, 0x80, 0x01,  // row 16
+  0xc0, 0xff, 0x8b, 0x31, 0x00,  // row 17
+  0xc0, 0xff, 0xef, 0x2f, 0x00,  // row 18
+  0x80, 0xff, 0xff, 0x2f, 0x00,  // row 19
+  0x80, 0xff, 0xff, 0x1f, 0x00,  // row 20
+  0x80, 0xff, 0xff, 0x17, 0x00,  // row 21
+  0x80, 0xff, 0xff, 0x1f, 0x00,  // row 22
+  0x00, 0xff, 0xff, 0x1f, 0x00,  // row 23
+  0x00, 0xff, 0xff, 0x07, 0x00,  // row 24
+  0x00, 0xfe, 0xff, 0x13, 0x00,  // row 25
+  0x00, 0xf8, 0xef, 0x03, 0x00,  // row 26
+  0x00, 0xf0, 0xef, 0x01, 0x00,  // row 27
+  0x00, 0xe0, 0xef, 0x00, 0x00,  // row 28
+  0x00, 0x80, 0x2f, 0x00, 0x00,  // row 29
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 30
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 31
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 32
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 33
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 34
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 35
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 36
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 37
+  0x00, 0x00, 0x00, 0x00, 0x00,  // row 38
+  0x00, 0x00, 0x00, 0x00, 0x00   // row 39
+};
 
 // --- WALLET RESTORE STATE ---
 char restoreWords[24][9];
@@ -803,6 +853,14 @@ void loop() {
         millis() - lastActivityMs > disp_ms) {
       displayOn = false;
     }
+
+    // US-035: screensaver after SCREENSAVER_TIMEOUT_MS of inactivity
+    if (displayOn && screensaver_should_activate(millis() - lastActivityMs)) {
+      screensaverPrevState = currentState;
+      screensaver_reset();
+      ssOldX = -1; ssOldY = -1;
+      currentState = SCREENSAVER;
+    }
   }
 
   if (currentState == SETTINGS_CONTRAST &&
@@ -847,6 +905,13 @@ void handleNavigation() {
 
   if (!displayOn) {
     displayOn = true;
+    lastActivityMs = millis();
+    return;
+  }
+
+  // US-035: any button press exits screensaver and restores previous state
+  if (currentState == SCREENSAVER) {
+    currentState = screensaverPrevState;
     lastActivityMs = millis();
     return;
   }
@@ -1680,6 +1745,22 @@ void renderCurrentState() {
     display.clearDisplay();
     display.display();
     return;
+  }
+
+  if (currentState == SCREENSAVER) {
+    bool pos_changed = screensaver_update_position(SCREEN_WIDTH, SCREEN_HEIGHT, millis());
+    int16_t sx = 0, sy = 0;
+    screensaver_get_position(&sx, &sy);
+
+    if (!pos_changed && sx == ssOldX && sy == ssOldY) {
+      return;
+    }
+
+    ssOldX = sx;
+    ssOldY = sy;
+  } else {
+    ssOldX = -1;
+    ssOldY = -1;
   }
 
   display.clearDisplay();
@@ -2946,6 +3027,18 @@ void renderCurrentState() {
         display.print(" CANCEL=scroll CONFIRM=toggle");
       }
       break;
+
+    case SCREENSAVER: {
+      int16_t sx = 0, sy = 0;
+      screensaver_get_position(&sx, &sy);
+
+      display.drawXBitmap(sx + 4, sy, cube_bitmap,
+                          SCREENSAVER_BITMAP_W, SCREENSAVER_BITMAP_H, SSD1306_WHITE);
+      display.setCursor(sx, sy + 41);
+      display.setTextSize(1);
+      display.print("COINCUBE");
+      break;
+    }
   }
   display.display();
 }
