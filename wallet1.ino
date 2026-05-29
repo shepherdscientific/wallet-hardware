@@ -993,7 +993,8 @@ void handleNavigation() {
       break;
 
     case BIP39_PREDICTIVE_INPUT:
-      restoreStartTime = millis();
+      // NOTE: do NOT reset restoreStartTime here — it must keep ticking from
+      // when the state was entered so the 5-minute abort timeout fires correctly.
       if (confirmPressed || cancelPressed) {
         lastActivityMs = millis();
         displayOn = true;
@@ -1005,7 +1006,8 @@ void handleNavigation() {
           predictiveLongPressDone = false;
         }
 
-        if (!predictiveLongPressDone && (millis() - predictiveCancelHoldStart) >= 2000) {
+        // Bug fix: long-press threshold is 1 s per US-032 spec (was 2000 ms).
+        if (!predictiveLongPressDone && (millis() - predictiveCancelHoldStart) >= 1000) {
           predictivePrefixLen = 0;
           predictivePrefix[0] = '\0';
           predictiveLetter = 'a';
@@ -1015,8 +1017,12 @@ void handleNavigation() {
           predictiveLongPressDone = true;
         } else if (!predictiveLongPressDone) {
           if (predictiveSelectMode) {
-            if (predictiveMatchCount > 0) {
-              predictiveHighlight = (predictiveHighlight + 1) % predictiveMatchCount;
+            // Cycle through candidates; wrapping past the last one exits
+            // selectMode back to letter cycling so users are never stuck.
+            predictiveHighlight++;
+            if (predictiveHighlight >= predictiveMatchCount) {
+              predictiveSelectMode = false;
+              predictiveHighlight = 0;
             }
           } else {
             if (predictiveLetter == 'z') {
