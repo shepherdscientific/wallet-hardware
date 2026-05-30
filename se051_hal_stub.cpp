@@ -5,6 +5,19 @@
 #include <stdlib.h>
 #include <cstdio>
 
+// When USE_NVS_PERSIST is defined (devsim build), key store entries survive
+// reboots via ESP32 NVS.  Without it the store is pure RAM (unit-test safe).
+#if defined(USE_NVS_PERSIST) && defined(ARDUINO)
+#include <Preferences.h>
+static Preferences g_nvs;
+static bool        g_nvs_open = false;
+// Known object IDs — we only persist these to NVS
+static const uint8_t PERSIST_IDS[] = {
+  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+};
+#define PERSIST_ID_COUNT (sizeof(PERSIST_IDS) / sizeof(PERSIST_IDS[0]))
+#endif
+
 static uint8_t g_initialized = 0;
 static uint32_t g_rand_seed = 0xDEADBEEF;
 
@@ -54,6 +67,26 @@ static uint32_t lcg_rand(void) {
 
 se051_err_t se051_init(void) {
   memset(g_key_store_valid, 0, sizeof(g_key_store_valid));
+
+#if defined(USE_NVS_PERSIST) && defined(ARDUINO)
+  if (!g_nvs_open) {
+    g_nvs.begin("secelem", false);
+    g_nvs_open = true;
+  }
+  // Restore RAM cache from NVS on every init (survives reboots).
+  for (uint8_t i = 0; i < PERSIST_ID_COUNT; i++) {
+    uint8_t id = PERSIST_IDS[i];
+    char nvs_key[6];
+    snprintf(nvs_key, sizeof(nvs_key), "k%02X", (unsigned)id);
+    size_t len = g_nvs.getBytesLength(nvs_key);
+    if (len > 0 && len <= 128) {
+      g_nvs.getBytes(nvs_key, g_key_store_data[id], len);
+      g_key_store_len[id]   = len;
+      g_key_store_valid[id] = 1;
+    }
+  }
+#endif
+
   g_initialized = 1;
   return SE_OK;
 }
@@ -105,6 +138,14 @@ se051_err_t se051_store_key(uint8_t key_id,
   memcpy(g_key_store_data[key_id], key_material, key_len);
   g_key_store_len[key_id]   = key_len;
   g_key_store_valid[key_id] = 1;
+
+#if defined(USE_NVS_PERSIST) && defined(ARDUINO)
+  if (g_nvs_open) {
+    char nvs_key[6];
+    snprintf(nvs_key, sizeof(nvs_key), "k%02X", (unsigned)key_id);
+    g_nvs.putBytes(nvs_key, key_material, key_len);
+  }
+#endif
   return SE_OK;
 }
 
@@ -112,6 +153,14 @@ se051_err_t se051_delete_key(uint8_t key_id) {
   memset(g_key_store_data[key_id], 0, g_key_store_len[key_id]);
   g_key_store_len[key_id]   = 0;
   g_key_store_valid[key_id] = 0;
+
+#if defined(USE_NVS_PERSIST) && defined(ARDUINO)
+  if (g_nvs_open) {
+    char nvs_key[6];
+    snprintf(nvs_key, sizeof(nvs_key), "k%02X", (unsigned)key_id);
+    g_nvs.remove(nvs_key);
+  }
+#endif
   return SE_OK;
 }
 
@@ -167,6 +216,13 @@ se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
   g_key_store_data[counter_id][0] = (uint8_t)current;
   g_key_store_len[counter_id] = 1;
   g_key_store_valid[counter_id] = 1;
+#if defined(USE_NVS_PERSIST) && defined(ARDUINO)
+  if (g_nvs_open) {
+    char nvs_key[6];
+    snprintf(nvs_key, sizeof(nvs_key), "k%02X", (unsigned)counter_id);
+    g_nvs.putBytes(nvs_key, g_key_store_data[counter_id], 1);
+  }
+#endif
   return SE_OK;
 }
 
@@ -174,6 +230,13 @@ se051_err_t se051_monotonic_counter_reset(uint8_t counter_id) {
   g_key_store_data[counter_id][0] = 0;
   g_key_store_len[counter_id] = 1;
   g_key_store_valid[counter_id] = 1;
+#if defined(USE_NVS_PERSIST) && defined(ARDUINO)
+  if (g_nvs_open) {
+    char nvs_key[6];
+    snprintf(nvs_key, sizeof(nvs_key), "k%02X", (unsigned)counter_id);
+    g_nvs.putBytes(nvs_key, g_key_store_data[counter_id], 1);
+  }
+#endif
   return SE_OK;
 }
 

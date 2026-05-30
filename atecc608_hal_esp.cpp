@@ -1,8 +1,10 @@
 #ifdef USE_ATECC608B
 
 #include "se051_hal.h"
+#include "bip32.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <string.h>
 
 static uint8_t g_se051_ready = 0;
 
@@ -214,6 +216,27 @@ se051_err_t se051_init(void) {
                 resp[0], resp[1], resp[2], resp[3]);
 #endif
 
+  // Diagnostic: Check Config Zone lock status (word 21, bytes 84-87)
+  err = atecc_send_cmd(ATECC_CMD_READ, 0x00, 21, NULL, 0);
+  if (err != SE_OK) {
+#ifdef DEV_BUILD
+    Serial.printf("[ATECC] LOCK_STATUS read send failed: %d\n", (int)err);
+#endif
+  } else {
+    rlen = 0;
+    err = atecc_recv_resp(resp, &rlen, sizeof(resp));
+    if (err == SE_OK && rlen >= 4) {
+#ifdef DEV_BUILD
+      Serial.printf("[ATECC] LockConfig=0x%02X LockValue=0x%02X (0x55 means locked)\n", 
+                    resp[3], resp[2]);
+#endif
+    } else {
+#ifdef DEV_BUILD
+      Serial.printf("[ATECC] LOCK_STATUS read recv failed: %d, rlen=%u\n", (int)err, (unsigned)rlen);
+#endif
+    }
+  }
+
   g_se051_ready = 1;
   return SE_OK;
 }
@@ -332,26 +355,27 @@ static se051_err_t atecc_write_slot32(uint8_t slot, const uint8_t in[32]) {
 se051_err_t se051_store_key(uint8_t key_id,
                             const uint8_t *key_material,
                             size_t key_len) {
-  if (!key_material || key_len == 0) return SE_ERR_PARAM;
+  if (!key_material || key_len == 0 || key_len > 32) return SE_ERR_PARAM;
   if (!g_se051_ready) return SE_ERR_COMM;
 
   uint8_t slot = map_key_id(key_id);
   if (slot == 0xFF) return SE_ERR_PARAM;
 
-  // Only data-zone slots (≥8) support clear-text 32-byte writes via this path.
-  // Master / chaincode key injection on slots 0-7 is not implemented here —
-  // those slots are written by the GenKey command flow during setup.
-  if (key_id == SE051_OBJ_FW_HASH) {
-    if (key_len != 32) return SE_ERR_PARAM;
-    return atecc_write_slot32(slot, key_material);
-  }
-
-  return SE_ERR_NOTFOUND;
+  // Pad to 32 bytes (shorter objects like anti-phish=8 B, passphrase flag=1 B).
+  uint8_t padded[32];
+  memset(padded, 0, sizeof(padded));
+  memcpy(padded, key_material, key_len);
+  return atecc_write_slot32(slot, padded);
 }
 
 se051_err_t se051_delete_key(uint8_t key_id) {
-  (void)key_id;
-  return SE_ERR_NOTFOUND;
+  if (!g_se051_ready) return SE_ERR_COMM;
+  uint8_t slot = map_key_id(key_id);
+  if (slot == 0xFF) return SE_ERR_NOTFOUND;
+  // Overwrite with zeros — se051_read_object treats all-zero as SE_ERR_NOTFOUND.
+  uint8_t zeros[32];
+  memset(zeros, 0, sizeof(zeros));
+  return atecc_write_slot32(slot, zeros);
 }
 
 se051_err_t se051_get_pubkey(uint8_t key_id,
@@ -360,23 +384,37 @@ se051_err_t se051_get_pubkey(uint8_t key_id,
   if (!g_se051_ready) return SE_ERR_COMM;
 
   uint8_t slot = map_key_id(key_id);
-  if (slot > 7) return SE_ERR_PARAM;
+  if (slot == 0xFF) return SE_ERR_PARAM;
 
-  atecc_wake();
+  if (key_id == SE051_KEY_BIP32_MASTER) {
+    // The master private key is stored raw in the slot.
+    // Read it back and derive the compressed public key in software.
+    uint8_t privkey[32];
+    se051_err_t err = atecc_read_slot32(slot, privkey);
+    if (err != SE_OK) return err;
+    bool all_zero = true;
+    for (int i = 0; i < 32; i++) { if (privkey[i]) { all_zero = false; break; } }
+    if (all_zero) { memset(privkey, 0, 32); return SE_ERR_NOTFOUND; }
+    bool ok = hd_pubkey_from_priv(privkey, pubkey_out);
+    memset(privkey, 0, 32);
+    return ok ? SE_OK : SE_ERR_COMM;
+  }
 
-  uint8_t mode[2] = { 0x00, slot };
-  se051_err_t err = atecc_send_cmd(ATECC_CMD_GENKEY, 0x00, 0x0000, mode, 2);
-  if (err != SE_OK) return err;
+  if (key_id == SE051_KEY_CHAIN_CODE) {
+    // Chain code is not an EC key — just confirm the slot has been written.
+    uint8_t raw[32];
+    se051_err_t err = atecc_read_slot32(slot, raw);
+    if (err != SE_OK) return err;
+    bool all_zero = true;
+    for (int i = 0; i < 32; i++) { if (raw[i]) { all_zero = false; break; } }
+    if (all_zero) return SE_ERR_NOTFOUND;
+    // Caller only checks SE_OK; pubkey_out content is not used for chain code.
+    memcpy(pubkey_out, raw, 32);
+    pubkey_out[32] = 0x00;
+    return SE_OK;
+  }
 
-  uint8_t resp[72];
-  size_t rlen = 0;
-  err = atecc_recv_resp(resp, &rlen, sizeof(resp));
-  if (err != SE_OK) return err;
-  if (rlen < 64) return SE_ERR_COMM;
-
-  pubkey_out[0] = (resp[63] & 1) ? 0x03 : 0x02;
-  memcpy(pubkey_out + 1, resp, 32);
-  return SE_OK;
+  return SE_ERR_PARAM;
 }
 
 se051_err_t se051_selftest(void) {
@@ -437,26 +475,26 @@ se051_err_t se051_read_object(uint8_t obj_id,
   uint8_t slot = map_key_id(obj_id);
   if (slot == 0xFF) return SE_ERR_PARAM;
 
+  uint8_t raw[32];
+  se051_err_t err = atecc_read_slot32(slot, raw);
+  if (err != SE_OK) return err;
+
+  // All-zero = slot was never written or was deleted via se051_delete_key.
+  bool all_zero = true;
+  for (int i = 0; i < 32; i++) { if (raw[i]) { all_zero = false; break; } }
+  if (all_zero) return SE_ERR_NOTFOUND;
+
+  // FW_HASH: additionally reject factory-blank all-FF value.
   if (obj_id == SE051_OBJ_FW_HASH) {
-    if (buf_len < 32) return SE_ERR_PARAM;
-    uint8_t raw[32];
-    se051_err_t err = atecc_read_slot32(slot, raw);
-    if (err != SE_OK) return err;
-    // Blank/unwritten slots return all-zeros (factory default) or all-FFs
-    // (erased).  Treat either as "not provisioned" so callers can skip the
-    // integrity check on a fresh device instead of tripping a false tamper.
-    uint8_t all_zero = 1, all_ff = 1;
-    for (int i = 0; i < 32; i++) {
-      if (raw[i] != 0x00) all_zero = 0;
-      if (raw[i] != 0xFF) all_ff   = 0;
-    }
-    if (all_zero || all_ff) return SE_ERR_NOTFOUND;
-    memcpy(buf, raw, 32);
-    *out_len = 32;
-    return SE_OK;
+    bool all_ff = true;
+    for (int i = 0; i < 32; i++) { if (raw[i] != 0xFF) { all_ff = false; break; } }
+    if (all_ff) return SE_ERR_NOTFOUND;
   }
 
-  return SE_ERR_NOTFOUND;
+  size_t copy = (buf_len < 32) ? buf_len : 32;
+  memcpy(buf, raw, copy);
+  *out_len = copy;
+  return SE_OK;
 }
 
 se051_err_t se051_monotonic_counter_get(uint8_t counter_id,
@@ -492,8 +530,14 @@ se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
   atecc_wake();
 
   uint8_t cmd_data[5] = { 0x01, (uint8_t)counter_id, 0x00, 0x00, 0x00 };
-  return atecc_send_cmd(ATECC_CMD_COUNTER, 0x00, 0x0000,
-                         cmd_data, sizeof(cmd_data));
+  se051_err_t err = atecc_send_cmd(ATECC_CMD_COUNTER, 0x00, 0x0000,
+                                    cmd_data, sizeof(cmd_data));
+  if (err != SE_OK) return err;
+  // Must drain the response to keep the I2C bus clean.
+  uint8_t resp[8];
+  size_t rlen = 0;
+  atecc_recv_resp(resp, &rlen, sizeof(resp));
+  return SE_OK;
 }
 
 se051_err_t se051_monotonic_counter_reset(uint8_t counter_id) {

@@ -124,6 +124,7 @@ uint8_t pinDigits[6] = {0};
 uint8_t pinPosition = 0;
 uint8_t pinDigitValue = 0;
 uint8_t pinAttempts = 0;
+unsigned long pinWrongMs = 0;  // non-zero while "Wrong PIN" flash is showing
 
 // --- MNEMONIC CEREMONY STATE ---
 char mnemonicWords[24][9];
@@ -833,6 +834,7 @@ void loop() {
       currentState == TX_HISTORY ||
       currentState == MNEMONIC_DISPLAY ||
       currentState == BIP39_PREDICTIVE_INPUT ||
+      currentState == PIN_ENTRY ||
       currentState == SETTINGS_MENU ||
       currentState == SETTINGS_TIMEOUT ||
       currentState == SETTINGS_AUTOLOCK ||
@@ -840,9 +842,17 @@ void loop() {
       currentState == SETTINGS_ABOUT ||
       currentState == SETTINGS_FACTORY_RESET_CONFIRM ||
       currentState == SETTINGS_FACTORY_RESET_SURE) {
-    // Auto-lock and display timeout don't apply mid-restore/verify — interrupting
-    // a 24-word entry would be more disruptive than the security benefit.
-    if (currentState != BIP39_PREDICTIVE_INPUT) {
+    // US-035: screensaver has priority — checked BEFORE display-off so the
+    // 30 s display-off timer can't race with the 30 s screensaver timer and
+    // set displayOn=false before the screensaver gets a chance to fire.
+    if (displayOn && screensaver_should_activate(millis() - lastActivityMs)) {
+      screensaverPrevState = currentState;
+      screensaver_reset();
+      ssOldX = -1; ssOldY = -1;
+      currentState = SCREENSAVER;
+    } else if (currentState != BIP39_PREDICTIVE_INPUT && currentState != PIN_ENTRY) {
+      // Auto-lock and display timeout don't apply mid-restore/verify — interrupting
+      // a 24-word entry would be more disruptive than the security benefit.
       uint32_t auto_lock_ms = settings_auto_lock_ms(settings_get_auto_lock());
       if (auto_lock_ms > 0 &&
           millis() - lastActivityMs > auto_lock_ms) {
@@ -859,14 +869,6 @@ void loop() {
           millis() - lastActivityMs > disp_ms) {
         displayOn = false;
       }
-    }
-
-    // US-035: screensaver fires from all idle states including the keyboard.
-    if (displayOn && screensaver_should_activate(millis() - lastActivityMs)) {
-      screensaverPrevState = currentState;
-      screensaver_reset();
-      ssOldX = -1; ssOldY = -1;
-      currentState = SCREENSAVER;
     }
   }
 
@@ -908,9 +910,19 @@ void handleNavigation() {
   bool confirmPressed = (digitalRead(BTN_CONFIRM) == LOW);
   bool cancelPressed = (digitalRead(BTN_CANCEL) == LOW);
 
-  // Edge-detection for the predictive keyboard: the BIP39 case never reaches
-  // its own "else { reset }" branch on frames where no button is pressed
-  // (the early return below fires first).  Reset here, before the return.
+  // ── Global rising-edge detection ────────────────────────────────────────
+  // Must run every frame (before any early return) so s_prev* tracks the
+  // real electrical state and edges are never missed or double-fired.
+  // Used by PIN_SETUP and PIN_ENTRY to fire exactly once per physical press.
+  static bool s_prevConfirm = false;
+  static bool s_prevCancel  = false;
+  bool confirmEdge = confirmPressed && !s_prevConfirm;
+  bool cancelEdge  = cancelPressed  && !s_prevCancel;
+  s_prevConfirm = confirmPressed;
+  s_prevCancel  = cancelPressed;
+
+  // BIP39 keyboard: reset hold-tracking state when buttons are released
+  // (the early-return below would skip the else{} branch inside that case).
   if (currentState == BIP39_PREDICTIVE_INPUT) {
     if (!cancelPressed && predictiveCancelHoldStart != 0) {
       predictiveCancelHoldStart  = 0;
@@ -985,26 +997,38 @@ void handleNavigation() {
       break;
 
     case PIN_SETUP:
-      if (confirmPressed) {
-        pinDigitValue = (pinDigitValue + 1) % 10;
-      } else if (cancelPressed) {
-        pinDigits[pinPosition] = pinDigitValue;
-        pinPosition++;
-        pinDigitValue = 0;
-        if (pinPosition >= 6) {
-          if (pin_setup(pinDigits)) {
-            pin_reset_attempts();
-            pinAttempts = 0;
-            enterDeviceIdDisplay();
+      // Use edge-detected presses: each physical tap fires exactly once.
+      if (pinPosition < 6) {
+        if (confirmEdge) {
+          pinDigitValue = (pinDigitValue + 1) % 10;
+        } else if (cancelEdge) {
+          pinDigits[pinPosition] = pinDigitValue;
+          pinPosition++;
+          pinDigitValue = 0;
+          if (pinPosition >= 6) {
+            if (pin_setup(pinDigits)) {
+              pin_reset_attempts();
+              pinAttempts = 0;
+              lastActivityMs = millis();
+              enterDeviceIdDisplay();
+            } else {
+              // SE write failed — show error and let user retry from digit 1
+              pinWrongMs = millis();   // reuse flash banner with "SE Error"
+              pinPosition = 0;
+              pinDigitValue = 0;
+              pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
+              pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+            }
           }
         }
       }
       break;
 
     case PIN_ENTRY:
-      if (confirmPressed) {
+      // Use edge-detected presses: each physical tap fires exactly once.
+      if (confirmEdge) {
         pinDigitValue = (pinDigitValue + 1) % 10;
-      } else if (cancelPressed) {
+      } else if (cancelEdge) {
         pinDigits[pinPosition] = pinDigitValue;
         pinPosition++;
         pinDigitValue = 0;
@@ -1016,6 +1040,7 @@ void handleNavigation() {
           if (pin_verify(pinDigits)) {
             pin_reset_attempts();
             pinAttempts = 0;
+            pinWrongMs = 0;
             if (wallet_has_passphrase()) {
               initSessionPassphraseEntry();
               currentState = BOOT_PASSPHRASE;
@@ -1028,6 +1053,8 @@ void handleNavigation() {
               currentState = WALLET_WIPED;
               lastActivityMs = millis();
             } else {
+              // Show "Wrong PIN" banner for 1.5 s before resetting digit entry.
+              pinWrongMs = millis();
               pinPosition = 0;
               pinDigitValue = 0;
               pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
@@ -2061,8 +2088,16 @@ void renderCurrentState() {
         }
         if (i < 5) display.print(" ");
       }
-      display.setCursor(0, 45);
-      display.print("CONFIRM=change CANCEL=next");
+      if (pinWrongMs > 0 && millis() - pinWrongMs < 1500UL) {
+        display.setCursor(0, 40);
+        display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+        display.print("  SE Error - retry  ");
+        display.setTextColor(SSD1306_WHITE);
+      } else {
+        if (pinWrongMs > 0) pinWrongMs = 0;
+        display.setCursor(0, 45);
+        display.print("CONFIRM=change CANCEL=next");
+      }
       break;
 
     case PIN_ENTRY:
@@ -2082,19 +2117,28 @@ void renderCurrentState() {
         }
         if (i < 5) display.print(" ");
       }
-      if (pinAttempts >= 3 && pinAttempts < PIN_MAX_ATTEMPTS) {
+      if (pinWrongMs > 0 && millis() - pinWrongMs < 1500UL) {
+        // Flash "Wrong PIN" for 1.5 s after a bad attempt
         display.setCursor(0, 40);
         display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-        display.print("WARNING: ");
-        display.print(pin_attempts_remaining());
-        display.print(" attempts remaining");
+        display.print("  Wrong PIN!  ");
         display.setTextColor(SSD1306_WHITE);
-      } else if (pinAttempts > 0) {
-        display.setCursor(0, 40);
-        display.print("Attempt ");
-        display.print(pinAttempts);
-        display.print(" of ");
-        display.print(PIN_MAX_ATTEMPTS);
+      } else {
+        if (pinWrongMs > 0) pinWrongMs = 0;  // expire the flash
+        if (pinAttempts >= 3 && pinAttempts < PIN_MAX_ATTEMPTS) {
+          display.setCursor(0, 40);
+          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+          display.print("WARNING: ");
+          display.print(pin_attempts_remaining());
+          display.print(" left");
+          display.setTextColor(SSD1306_WHITE);
+        } else if (pinAttempts > 0) {
+          display.setCursor(0, 40);
+          display.print("Attempt ");
+          display.print(pinAttempts);
+          display.print(" of ");
+          display.print(PIN_MAX_ATTEMPTS);
+        }
       }
       display.setCursor(0, 56);
       display.print("CONFIRM=change CANCEL=next");
