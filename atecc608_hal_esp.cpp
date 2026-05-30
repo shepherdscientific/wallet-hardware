@@ -6,7 +6,18 @@
 #include <Wire.h>
 #include <string.h>
 
+static void secure_zero(void *buf, size_t len) {
+  volatile uint8_t *p = (volatile uint8_t *)buf;
+  while (len--) *p++ = 0;
+}
+
 static uint8_t g_se051_ready = 0;
+#ifdef DEV_BUILD
+static bool g_atecc_dev_fallback = false;
+static uint8_t g_atecc_dev_store_valid[256];
+static size_t  g_atecc_dev_store_len[256];
+static uint8_t g_atecc_dev_store_data[256][32];
+#endif
 
 // ─── ATECC608B Constants ──────────────────────────────────────────────────
 
@@ -139,7 +150,7 @@ static se051_err_t atecc_recv_resp(uint8_t *resp, size_t *resp_len,
   uint8_t raw[130];
 
   for (uint8_t retry = 0; retry < SE051_I2C_RETRY_COUNT; retry++) {
-    Wire.requestFrom(SE051_I2C_ADDR, (uint8_t)max_len, (uint8_t)1);
+    Wire.requestFrom((uint16_t)SE051_I2C_ADDR, (uint8_t)max_len, (bool)true);
     if (Wire.available() >= 1) {
       uint8_t count = Wire.read();
       // count is inclusive of itself: packet = count + data + CRC (min 3 bytes)
@@ -218,6 +229,7 @@ se051_err_t se051_init(void) {
 #endif
 
   // Diagnostic: Check Config Zone lock status (word 21, bytes 84-87)
+  bool unprovisioned = false;
   err = atecc_send_cmd(ATECC_CMD_READ, 0x00, 21, NULL, 0);
   if (err != SE_OK) {
 #ifdef DEV_BUILD
@@ -230,13 +242,14 @@ se051_err_t se051_init(void) {
 #ifdef DEV_BUILD
       Serial.printf("[ATECC] LockConfig=0x%02X LockValue=0x%02X (0x55 means locked)\n", 
                     resp[3], resp[2]);
+#endif
       if (resp[3] != 0x55) {
+#ifdef DEV_BUILD
         Serial.println("[ATECC] WARNING: Config Zone NOT locked (unprovision chip)");
         Serial.println("[ATECC] Manual provisioning required. See scripts/atecc_slot_config.md");
-        // Return locked error to indicate unprovision state
-        return SE_ERR_LOCKED;
-      }
 #endif
+        unprovisioned = true;
+      }
     } else {
 #ifdef DEV_BUILD
       Serial.printf("[ATECC] LOCK_STATUS read recv failed: %d, rlen=%u\n", (int)err, (unsigned)rlen);
@@ -245,12 +258,30 @@ se051_err_t se051_init(void) {
   }
 
   g_se051_ready = 1;
-  return SE_OK;
+#ifdef DEV_BUILD
+  if (unprovisioned) {
+    g_atecc_dev_fallback = true;
+    memset(g_atecc_dev_store_valid, 0, sizeof(g_atecc_dev_store_valid));
+    memset(g_atecc_dev_store_len, 0, sizeof(g_atecc_dev_store_len));
+    memset(g_atecc_dev_store_data, 0, sizeof(g_atecc_dev_store_data));
+  }
+#endif
+  return unprovisioned ? SE_ERR_LOCKED : SE_OK;
 }
 
 se051_err_t se051_get_random(uint8_t *buf, size_t len) {
   if (!buf || len == 0 || len > 32) return SE_ERR_PARAM;
   if (!g_se051_ready) return SE_ERR_COMM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    for (size_t i = 0; i < len; i += 4) {
+      uint32_t rnd = esp_random();
+      size_t chunk = (len - i < 4) ? (len - i) : 4;
+      memcpy(buf + i, &rnd, chunk);
+    }
+    return SE_OK;
+  }
+#endif
 
   atecc_wake();
 
@@ -364,6 +395,17 @@ se051_err_t se051_store_key(uint8_t key_id,
                             size_t key_len) {
   if (!key_material || key_len == 0 || key_len > 32) return SE_ERR_PARAM;
   if (!g_se051_ready) return SE_ERR_COMM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(key_id);
+    if (slot == 0xFF) return SE_ERR_PARAM;
+    memset(g_atecc_dev_store_data[slot], 0, sizeof(g_atecc_dev_store_data[slot]));
+    memcpy(g_atecc_dev_store_data[slot], key_material, key_len);
+    g_atecc_dev_store_len[slot] = key_len;
+    g_atecc_dev_store_valid[slot] = 1;
+    return SE_OK;
+  }
+#endif
 
   uint8_t slot = map_key_id(key_id);
   if (slot == 0xFF) return SE_ERR_PARAM;
@@ -377,6 +419,16 @@ se051_err_t se051_store_key(uint8_t key_id,
 
 se051_err_t se051_delete_key(uint8_t key_id) {
   if (!g_se051_ready) return SE_ERR_COMM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(key_id);
+    if (slot == 0xFF) return SE_ERR_NOTFOUND;
+    memset(g_atecc_dev_store_data[slot], 0, sizeof(g_atecc_dev_store_data[slot]));
+    g_atecc_dev_store_len[slot] = 0;
+    g_atecc_dev_store_valid[slot] = 0;
+    return SE_OK;
+  }
+#endif
   uint8_t slot = map_key_id(key_id);
   if (slot == 0xFF) return SE_ERR_NOTFOUND;
   // Overwrite with zeros — se051_read_object treats all-zero as SE_ERR_NOTFOUND.
@@ -389,6 +441,26 @@ se051_err_t se051_get_pubkey(uint8_t key_id,
                              uint8_t pubkey_out[SE051_PUBKEY_COMPRESSED]) {
   if (!pubkey_out) return SE_ERR_PARAM;
   if (!g_se051_ready) return SE_ERR_COMM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(key_id);
+    if (slot == 0xFF) return SE_ERR_PARAM;
+    if (!g_atecc_dev_store_valid[slot]) return SE_ERR_NOTFOUND;
+    if (key_id == SE051_KEY_BIP32_MASTER) {
+      uint8_t privkey[32];
+      memcpy(privkey, g_atecc_dev_store_data[slot], 32);
+      bool ok = hd_pubkey_from_priv(privkey, pubkey_out);
+      secure_zero(privkey, 32);
+      return ok ? SE_OK : SE_ERR_COMM;
+    }
+    if (key_id == SE051_KEY_CHAIN_CODE) {
+      memcpy(pubkey_out, g_atecc_dev_store_data[slot], 32);
+      pubkey_out[32] = 0x00;
+      return SE_OK;
+    }
+    return SE_ERR_PARAM;
+  }
+#endif
 
   uint8_t slot = map_key_id(key_id);
   if (slot == 0xFF) return SE_ERR_PARAM;
@@ -477,6 +549,17 @@ se051_err_t se051_read_object(uint8_t obj_id,
                               size_t *out_len) {
   if (!buf || buf_len == 0 || !out_len) return SE_ERR_PARAM;
   if (!g_se051_ready) return SE_ERR_COMM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(obj_id);
+    if (slot == 0xFF) return SE_ERR_PARAM;
+    if (!g_atecc_dev_store_valid[slot]) return SE_ERR_NOTFOUND;
+    size_t copy = (buf_len < g_atecc_dev_store_len[slot]) ? buf_len : g_atecc_dev_store_len[slot];
+    memcpy(buf, g_atecc_dev_store_data[slot], copy);
+    *out_len = copy;
+    return SE_OK;
+  }
+#endif
   *out_len = 0;
 
   uint8_t slot = map_key_id(obj_id);
@@ -507,6 +590,18 @@ se051_err_t se051_read_object(uint8_t obj_id,
 se051_err_t se051_monotonic_counter_get(uint8_t counter_id,
                                         uint32_t *value) {
   if (!value || !g_se051_ready) return SE_ERR_PARAM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(counter_id);
+    if (slot == 0xFF) return SE_ERR_PARAM;
+    if (!g_atecc_dev_store_valid[slot]) {
+      *value = 0;
+      return SE_OK;
+    }
+    *value = g_atecc_dev_store_data[slot][0];
+    return SE_OK;
+  }
+#endif
 
   atecc_wake();
 
@@ -533,6 +628,22 @@ se051_err_t se051_monotonic_counter_get(uint8_t counter_id,
 
 se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
   if (!g_se051_ready) return SE_ERR_COMM;
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(counter_id);
+    if (slot == 0xFF) return SE_ERR_PARAM;
+    uint32_t current = 0;
+    if (g_atecc_dev_store_valid[slot]) {
+      current = g_atecc_dev_store_data[slot][0];
+    }
+    if (current >= 255) return SE_ERR_MEMORY;
+    current++;
+    g_atecc_dev_store_data[slot][0] = (uint8_t)current;
+    g_atecc_dev_store_len[slot] = 1;
+    g_atecc_dev_store_valid[slot] = 1;
+    return SE_OK;
+  }
+#endif
 
   atecc_wake();
 
@@ -548,6 +659,16 @@ se051_err_t se051_monotonic_counter_increment(uint8_t counter_id) {
 }
 
 se051_err_t se051_monotonic_counter_reset(uint8_t counter_id) {
+#ifdef DEV_BUILD
+  if (g_atecc_dev_fallback) {
+    uint8_t slot = map_key_id(counter_id);
+    if (slot == 0xFF) return SE_ERR_PARAM;
+    g_atecc_dev_store_data[slot][0] = 0;
+    g_atecc_dev_store_len[slot] = 1;
+    g_atecc_dev_store_valid[slot] = 1;
+    return SE_OK;
+  }
+#endif
   (void)counter_id;
   return SE_ERR_NOTFOUND;
 }

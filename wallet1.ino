@@ -650,7 +650,7 @@ void setup() {
   // In development, allow proceeding without PIN if SE is not provisioned
   // (SE_ERR_LOCKED means Config Zone not locked — unprovision chip)
   if (seInitErr == SE_ERR_LOCKED) {
-    seAvailable = true;  // Allow wallet to continue; PIN storage will fail gracefully
+    seAvailable = true;  // Allow wallet to continue; operations will fail gracefully
     Serial.println("[BOOT] SE unprovision (Config not locked) — skipping PIN in DEV_BUILD");
   }
 #endif
@@ -680,9 +680,19 @@ void setup() {
   }
 
   if (!seAvailable) {
+#ifdef DEV_BUILD
+    if (seInitErr == SE_ERR_LOCKED) {
+      currentState = BOOT_MENU;
+    } else {
+      // Route to a dedicated error screen so the user gets a clear message
+      // instead of a menu they can cycle but never confirm.
+      currentState = SE_ERROR;
+    }
+#else
     // Route to a dedicated error screen so the user gets a clear message
     // instead of a menu they can cycle but never confirm.
     currentState = SE_ERROR;
+#endif
   } else if (pin_is_set()) {
     currentState = PIN_ENTRY;
     pinAttempts = pin_get_attempts();
@@ -971,6 +981,12 @@ void handleNavigation() {
       if (confirmPressed || cancelPressed) {
         seInitErr = se051_init();
         seAvailable = (seInitErr == SE_OK);
+#ifdef DEV_BUILD
+        if (seInitErr == SE_ERR_LOCKED) {
+          seAvailable = true;
+          currentState = BOOT_MENU;
+        } else
+#endif
         if (seAvailable) {
           // Recovered — continue to normal boot decision
           if (pin_is_set()) {
