@@ -646,6 +646,15 @@ void setup() {
   seInitErr = se051_init();
   seAvailable = (seInitErr == SE_OK);
 
+#ifdef DEV_BUILD
+  // In development, allow proceeding without PIN if SE is not provisioned
+  // (SE_ERR_LOCKED means Config Zone not locked — unprovision chip)
+  if (seInitErr == SE_ERR_LOCKED) {
+    seAvailable = true;  // Allow wallet to continue; PIN storage will fail gracefully
+    Serial.println("[BOOT] SE unprovision (Config not locked) — skipping PIN in DEV_BUILD");
+  }
+#endif
+
 #ifndef SKIP_INTEGRITY_CHECK
   run_integrity_check();
 #endif
@@ -864,10 +873,14 @@ void loop() {
         pinAttempts = pin_get_attempts();
       }
 
-      uint32_t disp_ms = settings_disp_timeout_ms(settings_get_display_timeout());
-      if (disp_ms > 0 && displayOn &&
-          millis() - lastActivityMs > disp_ms) {
-        displayOn = false;
+      // US-035: Display timeout should not apply while screensaver is active;
+      // otherwise it would blank the display mid-animation.
+      if (currentState != SCREENSAVER) {
+        uint32_t disp_ms = settings_disp_timeout_ms(settings_get_display_timeout());
+        if (disp_ms > 0 && displayOn &&
+            millis() - lastActivityMs > disp_ms) {
+          displayOn = false;
+        }
       }
     }
   }
@@ -1013,11 +1026,24 @@ void handleNavigation() {
               enterDeviceIdDisplay();
             } else {
               // SE write failed — show error and let user retry from digit 1
+#ifdef DEV_BUILD
+              if (seInitErr == SE_ERR_LOCKED) {
+                // SE unprovision in DEV_BUILD: skip PIN requirement
+                Serial.println("[PIN] SE unprovision (SE_ERR_LOCKED) — skipping PIN setup");
+                pin_reset_attempts();
+                pinAttempts = 0;
+                lastActivityMs = millis();
+                enterDeviceIdDisplay();
+              } else {
+#endif
               pinWrongMs = millis();   // reuse flash banner with "SE Error"
               pinPosition = 0;
               pinDigitValue = 0;
               pinDigits[0] = 0; pinDigits[1] = 0; pinDigits[2] = 0;
               pinDigits[3] = 0; pinDigits[4] = 0; pinDigits[5] = 0;
+#ifdef DEV_BUILD
+              }
+#endif
             }
           }
         }
@@ -1830,18 +1856,31 @@ void renderCurrentState() {
     case SE_ERROR:
       display.setCursor(0, 0);
       display.setTextSize(1);
-      display.println("!! SE COMM FAILURE !!");
-      display.println("---------------------");
-      display.setCursor(0, 18);
-      display.setTextSize(2);
-      display.println("SE FAULT");
-      display.setTextSize(1);
-      display.setCursor(0, 40);
-      display.print("Err: 0x");
-      display.println(seInitErr, HEX);
-      display.setCursor(0, 50);
-      display.print("Press any key: retry");
-      display.setCursor(0, 58);
+      if (seInitErr == SE_ERR_LOCKED) {
+        display.println("!! SE NOT PROVISIONED !!");
+        display.println("------------------------");
+        display.setCursor(0, 18);
+        display.setTextSize(1);
+        display.println("Config Zone not locked");
+        display.println("");
+        display.println("Factory provisioning");
+        display.println("required. See:");
+        display.println("scripts/atecc_");
+        display.println("slot_config.md");
+      } else {
+        display.println("!! SE COMM FAILURE !!");
+        display.println("---------------------");
+        display.setCursor(0, 18);
+        display.setTextSize(2);
+        display.println("SE FAULT");
+        display.setTextSize(1);
+        display.setCursor(0, 40);
+        display.print("Err: 0x");
+        display.println(seInitErr, HEX);
+        display.setCursor(0, 50);
+        display.print("Press any key: retry");
+        display.setCursor(0, 58);
+      }
       display.print("Power cycle if stuck");
       break;
 

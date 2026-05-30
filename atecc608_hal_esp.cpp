@@ -16,6 +16,7 @@ static uint8_t g_se051_ready = 0;
 #define ATECC_CMD_GENKEY      0x40
 #define ATECC_CMD_READ        0x02
 #define ATECC_CMD_WRITE       0x12
+#define ATECC_CMD_LOCK        0x17
 #define ATECC_CMD_SELFTEST    0x77
 #define ATECC_CMD_NONCE       0x16
 #define ATECC_CMD_COUNTER     0x24
@@ -229,6 +230,12 @@ se051_err_t se051_init(void) {
 #ifdef DEV_BUILD
       Serial.printf("[ATECC] LockConfig=0x%02X LockValue=0x%02X (0x55 means locked)\n", 
                     resp[3], resp[2]);
+      if (resp[3] != 0x55) {
+        Serial.println("[ATECC] WARNING: Config Zone NOT locked (unprovision chip)");
+        Serial.println("[ATECC] Manual provisioning required. See scripts/atecc_slot_config.md");
+        // Return locked error to indicate unprovision state
+        return SE_ERR_LOCKED;
+      }
 #endif
     } else {
 #ifdef DEV_BUILD
