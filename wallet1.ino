@@ -3195,7 +3195,7 @@ void showBootSplash() {
   display.setCursor(15, 18);
   display.println("COINCUBE");
   display.setTextSize(1);
-  display.setCursor(38, 42);
+  display.setCursor(16, 42);
   display.println("SECURE APPARATUS");
   display.display();
   delay(2000);
