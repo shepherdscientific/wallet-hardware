@@ -2,12 +2,31 @@
 *.hex
 *.elf
 *.bin
+*.o
+test_bip39
+test_se051_stub
+test_wallet_storage
+test_bip32
+test_pin_manager
+test_address
+test_qr_renderer
+test_tx_review
+test_psbt
+test_psbt_signer
+test_psbt_serialize
+test_serial_transport
+test_base64
+test_fw_integrity
+test_ternarycore_se
 
 # Build Folders
 # These are generated during compilation and shouldn't be tracked
 build/
 bin/
 out/
+.pio/
+.pioenvs/
+test_bip32_bin
 
 # IDE Specific Files (Arduino IDE 2.x and Visual Studio)
 .arduino/
@@ -26,3 +45,15 @@ scripts/*/
 opencode.json
 .env.*
 
+# Python Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.Python
+
+.aider*

@@ -1,0 +1,28 @@
+# ESP32-S3 Secure Boot v2 Configuration (Production)
+# Generated via: idf.py menuconfig / merged with sdkconfig.base
+# These are the security-critical overrides for production wallets.
+# DO NOT include in dev builds — secure boot eFuse burning is IRREVERSIBLE.
+#
+# Testing: Flash and verify WITHOUT burning eFuses first:
+#   pio run -e production -t upload
+#   (device will boot unsigned firmware because eFuses not yet burned)
+# Manufacturing: After testing, burn eFuses:
+#   espefuse.py burn_key BLOCK_KEY0 secure_boot_signing_key.pem
+#   espefuse.py burn_efuse SECURE_BOOT_EN 1
+
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_INSECURE=n
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+CONFIG_BOOTLOADER_LOG_LEVEL=0
+
+CONFIG_FLASH_ENCRYPTION_ENABLED=y
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_SECURE_FLASH_ENCRYPTION_KEYSIZE=256
+CONFIG_SECURE_UART_ROM_DL_MODE_ENABLED=y
+
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=n
+CONFIG_ESP_SYSTEM_PANIC_GDBSTUB=y

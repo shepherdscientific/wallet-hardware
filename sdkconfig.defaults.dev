@@ -1,0 +1,21 @@
+# ESP32-S3 Development Build Configuration
+# No secure boot, no flash encryption — for rapid iteration.
+#
+# Secure boot is NOT enabled here. Do not burn eFuses on dev boards.
+# Flash encryption is NOT enabled. NVS is stored in plaintext for debugging.
+
+CONFIG_SECURE_BOOT=n
+CONFIG_FLASH_ENCRYPTION_ENABLED=n
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y
+CONFIG_BOOTLOADER_LOG_LEVEL=3
+
+# Increase the Arduino loopTask stack from the default 8 KB to 32 KB.
+# serial_msg_t (data[8192]) is now in BSS via g_serial_msg, but this safety
+# margin guards against future large locals and deep call chains.
+CONFIG_ARDUINO_LOOP_STACK_SIZE=32768
+
+# Disable the framework task watchdog entirely in dev.
+# The IDF v5.x TWDT fires from IRAM (Saved PC 0x403cd9aa) before setup() runs
+# if the pre-setup init takes longer than the timeout.  Our own watchdog_init()
+# re-enables it with trigger_panic=true after setup() completes safely.
+CONFIG_ESP_TASK_WDT_EN=n
