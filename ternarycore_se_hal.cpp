@@ -2,7 +2,7 @@
 
 #include "se051_hal.h"
 
-// ─── TernaryCore SE — UART HAL ────────────────────────────────────────────
+// ─── TernaryCore SE — UART HAL ──────────────────────────────────────────
 //
 // The TernaryCore Secure Element (Tang Nano 9K / GW1NR-9) communicates over
 // a UART at 115200 8N1 using an AT-command protocol:
@@ -27,10 +27,11 @@
 //   ERR:5 → SE_ERR_NOTFOUND, ERR:6 → SE_ERR_MEMORY, other → SE_ERR_INTERNAL
 //
 
-// ─── Platform Abstraction (UART + timing) ──────────────────────────────────
+// ─── Platform Abstraction (UART + timing) ──────────────────────────────
 #if defined(ARDUINO) && defined(ESP32)
 
 #include <Arduino.h>
+#include "watchdog.h"
 
 static void tc_uart_begin(int baud, int config, int rx, int tx) {
   Serial1.begin((unsigned long)baud, (uint32_t)config, rx, tx);
@@ -42,10 +43,12 @@ static int tc_uart_available(void) { return Serial1.available(); }
 static char tc_uart_read(void) { return (char)Serial1.read(); }
 static void tc_uart_write(const char *s) { Serial1.print(s); }
 static uint32_t tc_millis(void) { return millis(); }
-static void tc_delay_ms(uint32_t ms) { delay(ms); }
+// Feed the watchdog on every tick so long-running AT commands
+// (AT+PUBKEY/AT+SIGN can take 60–90 s on PicoRV32) don't trip the TWDT.
+static void tc_delay_ms(uint32_t ms) { delay(ms); watchdog_feed(); }
 
 #else
-// ─── Host mock (test_ternarycore_se.cpp) ───────────────────────────────────
+// ─── Host mock (test_ternarycore_se.cpp) ───────────────────────────────────────
 
 #ifndef SERIAL_8N1
 #define SERIAL_8N1 0
@@ -106,11 +109,11 @@ static uint32_t tc_millis(void) { return g_mock_millis; }
 static void tc_delay_ms(uint32_t ms) { g_mock_millis += ms; }
 #endif
 
-// ─── Internal state ────────────────────────────────────────────────────────
+// ─── Internal state ──────────────────────────────────────────────────────────
 
 static bool g_tc_ready = false;
 
-// ─── Hex helpers ───────────────────────────────────────────────────────────
+// ─── Hex helpers ────────────────────────────────────────────────────────────
 
 static size_t tc_hex_decode(uint8_t *out, size_t out_cap, const char *hex) {
   size_t count = 0;
@@ -147,7 +150,7 @@ static void tc_hex_encode(char *out, size_t out_cap,
   if (pos < out_cap) out[pos] = '\0';
 }
 
-// ─── UART command/response engine ──────────────────────────────────────────
+// ─── UART command/response engine ──────────────────────────────────────────────
 
 static bool tc_wait_for(const char *token, uint32_t timeout_ms) {
   uint32_t deadline = tc_millis() + timeout_ms;
@@ -219,32 +222,46 @@ static se051_err_t tc_cmd(const char *cmd, const char *prefix,
   return SE_ERR_NOTFOUND;
 }
 
-// ─── Public HAL implementation ────────────────────────────────────────────
+// ─── Public HAL implementation ────────────────────────────────────────────────
+
+// Number of AT+INFO attempts before giving up.  Each attempt uses
+// TC_SE_UART_TIMEOUT_MS (5 s) then waits TC_SE_INIT_RETRY_MS (1 s) before
+// the next try.  Total budget ≈ 8 × (5+1) = 48 s — comfortably covers the
+// 4–6 s SRAM-mode FPGA cold-boot and any BL702 USB-bridge delay.
+#define TC_SE_INIT_RETRIES   8
+#define TC_SE_INIT_RETRY_MS  1000
 
 se051_err_t se051_init(void) {
   tc_uart_begin(TC_SE_UART_BAUD, SERIAL_8N1,
                 TC_SE_UART_RX_PIN, TC_SE_UART_TX_PIN);
-  tc_delay_ms(500);  // let FPGA boot if it just powered up
-  tc_uart_flush();
-
-  // Active probe: send AT+INFO to confirm FPGA is alive.
-  // Uses the structured response protocol instead of waiting for
-  // a one-shot boot banner (which may have already been sent).
-  char info[128];
-  se051_err_t err = tc_cmd("AT+INFO\n", "INFO:", info, sizeof(info),
-                           TC_SE_UART_TIMEOUT_MS);
 
 #if defined(ARDUINO) && defined(ESP32) && defined(DEV_BUILD)
-  if (err == SE_OK) {
-    Serial.printf("[TC-SE] init OK — INFO:%s\n", info);
-  } else {
-    Serial.printf("[TC-SE] init FAIL — no response (err=%d)\n", (int)err);
-  }
   Serial.printf("[TC-SE] UART: baud=%u TX=GPIO%d RX=GPIO%d\n",
                 (unsigned)TC_SE_UART_BAUD,
                 (int)TC_SE_UART_TX_PIN,
                 (int)TC_SE_UART_RX_PIN);
 #endif
+
+  char info[128];
+  se051_err_t err = SE_ERR_COMM;
+
+  for (int attempt = 1; attempt <= TC_SE_INIT_RETRIES; attempt++) {
+    tc_uart_flush();  // clear boot banner or stale bytes before each probe
+    err = tc_cmd("AT+INFO\n", "INFO:", info, sizeof(info),
+                 TC_SE_UART_TIMEOUT_MS);
+
+#if defined(ARDUINO) && defined(ESP32) && defined(DEV_BUILD)
+    if (err == SE_OK) {
+      Serial.printf("[TC-SE] init OK (attempt %d) — INFO:%s\n", attempt, info);
+    } else {
+      Serial.printf("[TC-SE] init attempt %d/%d failed (err=%d), retrying...\n",
+                    attempt, TC_SE_INIT_RETRIES, (int)err);
+    }
+#endif
+
+    if (err == SE_OK) break;
+    if (attempt < TC_SE_INIT_RETRIES) tc_delay_ms(TC_SE_INIT_RETRY_MS);
+  }
 
   g_tc_ready = (err == SE_OK);
   return err;
@@ -329,7 +346,7 @@ se051_err_t se051_store_key(uint8_t key_id,
            (unsigned)key_id, key_hex);
 
   char dummy[4];
-  return tc_cmd(cmd, "OK", dummy, sizeof(dummy), TC_SE_SIGN_TIMEOUT_MS);
+  return tc_cmd(cmd, "OK", dummy, sizeof(dummy), TC_SE_UART_TIMEOUT_MS);
 }
 
 se051_err_t se051_delete_key(uint8_t key_id) {
@@ -352,7 +369,7 @@ se051_err_t se051_get_pubkey(uint8_t key_id,
 
   char hex[SE051_PUBKEY_COMPRESSED * 2 + 1];
   se051_err_t err = tc_cmd(cmd, "PUB:", hex, sizeof(hex),
-                           TC_SE_SIGN_TIMEOUT_MS);
+                           TC_SE_PUBKEY_TIMEOUT_MS);
   if (err != SE_OK) return err;
 
   size_t decoded = tc_hex_decode(pubkey_out, SE051_PUBKEY_COMPRESSED, hex);
