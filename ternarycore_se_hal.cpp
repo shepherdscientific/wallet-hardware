@@ -224,28 +224,30 @@ static se051_err_t tc_cmd(const char *cmd, const char *prefix,
 se051_err_t se051_init(void) {
   tc_uart_begin(TC_SE_UART_BAUD, SERIAL_8N1,
                 TC_SE_UART_RX_PIN, TC_SE_UART_TX_PIN);
-  tc_delay_ms(100);
-
+  tc_delay_ms(500);  // let FPGA boot if it just powered up
   tc_uart_flush();
 
-  bool banner = tc_wait_for("TernaryCore-SE", TC_SE_UART_TIMEOUT_MS);
+  // Active probe: send AT+INFO to confirm FPGA is alive.
+  // Uses the structured response protocol instead of waiting for
+  // a one-shot boot banner (which may have already been sent).
+  char info[128];
+  se051_err_t err = tc_cmd("AT+INFO\n", "INFO:", info, sizeof(info),
+                           TC_SE_UART_TIMEOUT_MS);
 
 #if defined(ARDUINO) && defined(ESP32) && defined(DEV_BUILD)
-  if (banner) {
-    Serial.println("[TC-SE] init OK — boot banner received");
+  if (err == SE_OK) {
+    Serial.printf("[TC-SE] init OK — INFO:%s\n", info);
   } else {
-    Serial.println("[TC-SE] init OK — no banner seen (FPGA may already be running)");
+    Serial.printf("[TC-SE] init FAIL — no response (err=%d)\n", (int)err);
   }
   Serial.printf("[TC-SE] UART: baud=%u TX=GPIO%d RX=GPIO%d\n",
                 (unsigned)TC_SE_UART_BAUD,
                 (int)TC_SE_UART_TX_PIN,
                 (int)TC_SE_UART_RX_PIN);
-#else
-  (void)banner;
 #endif
 
-  g_tc_ready = true;
-  return SE_OK;
+  g_tc_ready = (err == SE_OK);
+  return err;
 }
 
 se051_err_t se051_get_random(uint8_t *buf, size_t len) {

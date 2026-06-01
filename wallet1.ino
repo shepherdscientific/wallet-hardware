@@ -647,11 +647,11 @@ void setup() {
   seAvailable = (seInitErr == SE_OK);
 
 #ifdef DEV_BUILD
-  // In development, allow proceeding without PIN if SE is not provisioned
-  // (SE_ERR_LOCKED means Config Zone not locked — unprovision chip)
-  if (seInitErr == SE_ERR_LOCKED) {
-    seAvailable = true;  // Allow wallet to continue; PIN storage will fail gracefully
-    Serial.println("[BOOT] SE unprovision (Config not locked) — skipping PIN in DEV_BUILD");
+  // Allow proceeding without SE on timeout / unreachable FPGA.
+  if (seInitErr == SE_ERR_LOCKED || seInitErr == SE_ERR_NOTFOUND ||
+      seInitErr == SE_ERR_COMM) {
+    seAvailable = true;
+    Serial.printf("[BOOT] SE offline (err=%d) — continuing in DEV_BUILD\n", (int)seInitErr);
   }
 #endif
 
@@ -680,9 +680,19 @@ void setup() {
   }
 
   if (!seAvailable) {
+#ifdef DEV_BUILD
+    if (seInitErr == SE_ERR_LOCKED) {
+      currentState = BOOT_MENU;
+    } else {
+      // Route to a dedicated error screen so the user gets a clear message
+      // instead of a menu they can cycle but never confirm.
+      currentState = SE_ERROR;
+    }
+#else
     // Route to a dedicated error screen so the user gets a clear message
     // instead of a menu they can cycle but never confirm.
     currentState = SE_ERROR;
+#endif
   } else if (pin_is_set()) {
     currentState = PIN_ENTRY;
     pinAttempts = pin_get_attempts();
@@ -971,6 +981,12 @@ void handleNavigation() {
       if (confirmPressed || cancelPressed) {
         seInitErr = se051_init();
         seAvailable = (seInitErr == SE_OK);
+#ifdef DEV_BUILD
+        if (seInitErr == SE_ERR_LOCKED) {
+          seAvailable = true;
+          currentState = BOOT_MENU;
+        } else
+#endif
         if (seAvailable) {
           // Recovered — continue to normal boot decision
           if (pin_is_set()) {
@@ -1886,7 +1902,7 @@ void renderCurrentState() {
 
     case BOOT_MENU:
       display.setCursor(0, 0);
-      display.println("COINCUBE WALLET");
+      display.println("TERNARYCORE");
       display.println("---------------------");
       display.setCursor(0, 18);
       display.setTextSize(2);
@@ -2189,11 +2205,11 @@ void renderCurrentState() {
         char name_buf[ACCOUNT_NAME_LEN];
         uint32_t acct = account_get_active();
         if (account_get_name(acct, name_buf, sizeof(name_buf))) {
-          display.print("COINCUBE [");
+          display.print("TC | CoinCube [");
           display.print(name_buf);
           display.println("]");
         } else {
-          display.print("COINCUBE [Acct ");
+          display.print("TC | CoinCube [Acct ");
           display.print(acct);
           display.println("]");
         }
@@ -2652,7 +2668,7 @@ void renderCurrentState() {
 
     case DEVICE_ID_DISPLAY:
       display.setCursor(0, 0);
-      display.println("COINCUBE DEVICE ID");
+      display.println("TC | DEVICE ID");
       display.println("---------------------");
       display.setCursor(0, 20);
       display.print(antiPhishWords[0]);
@@ -2910,42 +2926,25 @@ void renderCurrentState() {
 
     case SETTINGS_ABOUT:
       display.setCursor(0, 0);
-      display.println("ABOUT");
+      display.println("SYSTEM INFO");
       display.println("---------------------");
       display.setCursor(0, 18);
-      display.print("FW: ");
+      display.print("CORE: TernaryCore PQC");
+      display.setCursor(0, 26);
+      display.print("BASE: CoinCube Stack");
+      display.setCursor(0, 34);
+      display.print("FW:   ");
       display.println(FIRMWARE_VERSION);
-      display.print("Hash: ");
+      display.setCursor(0, 42);
+      display.print("HASH: ");
       display.println(BUILD_HASH);
-      display.print("SE: ");
-      {
-        char serial[32];
-        if (se051_get_serial(serial, sizeof(serial)) == SE_OK) {
-          display.println(serial);
-        } else {
-          display.println("unknown");
-        }
-      }
-      display.print("Addr type: ");
-      {
-        address_type_t at = (address_type_t)addressTypeIdx;
-        display.println(address_type_name(at));
-      }
-      display.print("Active acct: ");
-      display.println(account_get_active());
-      {
-        const char *crash = watchdog_get_last_crash();
-        if (crash) {
-          display.setCursor(0, 56);
-          display.print("Last crash: ");
-          display.println(crash);
-        } else {
-          display.setCursor(0, 56);
-          display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
-          display.print(" [BACK] ");
-          display.setTextColor(SSD1306_WHITE);
-        }
-      }
+      display.setCursor(0, 50);
+      display.print("TYPE: ACADEMIC EVAL");
+      // [BACK] pill at bottom-right
+      display.setCursor(0, 56);
+      display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+      display.print(" [BACK] ");
+      display.setTextColor(SSD1306_WHITE);
       break;
 
     case SETTINGS_FACTORY_RESET_CONFIRM:
@@ -3144,14 +3143,15 @@ void renderCurrentState() {
       break;
 
     case SCREENSAVER: {
+      // Bouncing TernaryCore hollow triangle — fits the 48×49 bounding box so
+      // screensaver_update_position() bounds stay valid.
+      // Outer filled triangle, inner black triangle punches out the centre.
       int16_t sx = 0, sy = 0;
       screensaver_get_position(&sx, &sy);
-
-      display.drawXBitmap(sx + 4, sy, cube_bitmap,
-                          SCREENSAVER_BITMAP_W, SCREENSAVER_BITMAP_H, SSD1306_WHITE);
-      display.setCursor(sx, sy + 41);
-      display.setTextSize(1);
-      display.print("COINCUBE");
+      // Outer: apex(sx+24, sy+1)  BL(sx+1, sy+46)  BR(sx+47, sy+46)
+      display.fillTriangle(sx+24, sy+1,  sx+1,  sy+46, sx+47, sy+46, SSD1306_WHITE);
+      // Inner (cut-out): apex(sx+24, sy+10) BL(sx+9, sy+41) BR(sx+39, sy+41)
+      display.fillTriangle(sx+24, sy+10, sx+9,  sy+41, sx+39, sy+41, SSD1306_BLACK);
       break;
     }
   }
@@ -3174,15 +3174,25 @@ void executeSigningSequence() {
 
 void showBootSplash() {
   display.clearDisplay();
-  display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(15, 18);
-  display.println("COINCUBE");
+
+  // TernaryCore hollow triangle logo — matches brand mark exactly.
+  // Outer filled triangle, then black inner triangle to punch out the centre.
+  // Apex: (64, 2)  BL: (18, 44)  BR: (110, 44)
+  display.fillTriangle(64, 2, 18, 44, 110, 44, SSD1306_WHITE);
+  display.fillTriangle(64, 12, 27, 40,  101, 40, SSD1306_BLACK);
+
+  // Logotype below triangle — 11 chars × 6 px = 66 px wide; centred on 128 px
   display.setTextSize(1);
-  display.setCursor(38, 42);
-  display.println("SECURE APPARATUS");
+  display.setCursor(31, 48);
+  display.print("ternarycore");
+
+  // Attribution line
+  display.setCursor(13, 57);
+  display.print("Powered by CoinCube");
+
   display.display();
-  delay(2000);
+  delay(2500);
 }
 
 // --- MNEMONIC CEREMONY HELPERS ---
