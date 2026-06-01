@@ -16,6 +16,8 @@ extern "C" {
 #elif defined(USE_SE_STUB)
   #define SE051_HAL_ACTIVE 1
 #elif defined(USE_TERNARYCORE_SE)
+  // TernaryCore Secure Element — FPGA-based PQC SE on Tang Nano 9K.
+  // Physical interface: UART (Serial1) instead of I2C.
   #define SE051_HAL_ACTIVE 1
   #define SE_IS_UART_BASED 1
 #else
@@ -32,9 +34,11 @@ extern "C" {
 #define SE051_I2C_RETRY_MS    50
 
 // ─── UART Constants (USE_TERNARYCORE_SE only) ────────────────────────────
-// Confirmed bench wiring: GPIO17 → Tang pin 39 (uart_ext_rx)
-//                         GPIO16 ← Tang pin 38 (uart_ext_tx)
-// Tang Nano pins 17/18 route to the BL702 USB bridge — do NOT use those.
+// Serial1 on the ESP32-S3; pins can be overridden in build flags.
+// Tang Nano 9K connection:
+//   ESP32-S3 GPIO17 (TX) → Tang header pin 39 (uart_ext_rx)
+//   ESP32-S3 GPIO16 (RX) ← Tang header pin 38 (uart_ext_tx)
+//   GND shared
 #ifndef TC_SE_UART_TX_PIN
   #define TC_SE_UART_TX_PIN  17   // ESP32-S3 GPIO17 → TernaryCore UART_RX (pin 39)
 #endif
