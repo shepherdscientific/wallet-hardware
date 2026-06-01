@@ -249,7 +249,6 @@ se051_err_t se051_init(void) {
   g_tc_ready = (err == SE_OK);
   return err;
 }
-}
 
 se051_err_t se051_get_random(uint8_t *buf, size_t len) {
   if (!buf || len == 0 || len > SE051_RANDOM_LEN) return SE_ERR_PARAM;
